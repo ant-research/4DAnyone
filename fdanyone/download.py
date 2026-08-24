@@ -220,12 +220,15 @@ def ensure_example_video(video_path: str | Path) -> Path:
 
 def _parse_interactive_path(value: str) -> Path:
     try:
-        parts = shlex.split(value.strip())
+        parts = shlex.split(value.strip(), posix=os.name != "nt")
     except ValueError as exc:
         raise AssetError(f"Could not parse the archive path: {exc}") from None
     if len(parts) != 1:
         raise AssetError("Enter one ZIP or SMPLX_NEUTRAL.npz path.")
-    return Path(parts[0]).expanduser()
+    path = parts[0]
+    if os.name == "nt" and len(path) >= 2 and path[0] == path[-1] and path[0] in "'\"":
+        path = path[1:-1]
+    return Path(path).expanduser()
 
 
 def _copy_model_from_source(source: Path, destination: Path) -> None:
