@@ -46,6 +46,8 @@ python inference.py \
 
 <p align="left"><img src="docs/assets/inference-6-views.jpg" width="600" alt="Six evenly spaced target cameras on one full orbit"></p>
 
+See the [inference performance reference](docs/inference_performance.md) for H20-3E, H200, and RTX A6000 timings, including SDPA and FlashAttention-3 comparisons.
+
 ### 24-view full orbit
 
 A dense 360° layout with broad angular coverage, suitable for 4DGS reconstruction.
