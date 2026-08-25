@@ -23,7 +23,7 @@ def inference(
     checkpoint_path: str | None = None,
     mhr70_regressor_path: str | None = None,
     gvhmr_root: str = "third_party/GVHMR",
-    device: str = "cuda:0",
+    gpu_ids: list[int] | None = None,
     target_fps: str | int | float = "auto",
     start_time: float = 0.0,
     seed: int = 42,
@@ -51,7 +51,8 @@ def inference(
         checkpoint_path: Local 4DAnyone checkpoint override.
         mhr70_regressor_path: Local SMPL-X-to-MHR70 regressor override.
         gvhmr_root: Path to the GVHMR source checkout.
-        device: CUDA device, for example cuda:0.
+        gpu_ids: GPU IDs to use for parallel denoising. Omit to use all
+            visible GPUs.
         target_fps: auto preserves the input clock unless it divides evenly
             to 24, 25, or 30 FPS; a positive number requests an explicit FPS.
         start_time: Clip start time on the input timeline, in seconds.
@@ -75,7 +76,7 @@ def inference(
         checkpoint_path=checkpoint_path,
         mhr70_regressor_path=mhr70_regressor_path,
         gvhmr_root=gvhmr_root,
-        device=device,
+        gpu_ids=gpu_ids,
         target_fps=target_fps,
         start_time=start_time,
         seed=seed,

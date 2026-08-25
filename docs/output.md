@@ -24,7 +24,7 @@ data/
 - `videos/sparse/` contains intermediate proposal views for larger camera layouts.
 - `skeletons/` contains pose-conditioning videos aligned with the target views.
 - `cameras.json` contains camera intrinsics and poses for every target view.
-- `metadata.json` records the input, generation settings, model versions, and timings.
+- `metadata.json` records the input, generation settings, model versions, timings, and worker metrics when target denoising uses multiple GPUs.
 - `gvhmr/results/` caches the recovered input motion for reuse.
 
 All output videos contain 121 frames at 704×1280, use the selected output FPS, and contain no audio.

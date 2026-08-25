@@ -257,3 +257,16 @@ def load_pipeline(
     pipe.height_division_factor = pipe.vae.upsampling_factor * 2
     pipe.width_division_factor = pipe.vae.upsampling_factor * 2
     return LoadedPipeline(pipe=pipe)
+
+
+def load_denoiser(*, checkpoint_path: str | Path, device: str):
+    """Load the DiT and scheduler required by one distributed worker."""
+
+    import torch
+
+    from fdanyone.vendor.diffsynth.pipelines.wan_video_spatem import WanVideoSpaTemPipeline
+
+    dtype = torch.bfloat16
+    pipe = WanVideoSpaTemPipeline(device=device, torch_dtype=dtype)
+    pipe.dit = _load_dit(Path(checkpoint_path), dtype)
+    return pipe

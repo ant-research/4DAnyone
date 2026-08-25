@@ -11,7 +11,7 @@ The root Apache-2.0 license applies only to first-party 4DAnyone code. The follo
 
 4DAnyone uses the official upstream source without a GVHMR source patch. The pinned revision is immutable and can be fetched anonymously from the upstream repository.
 
-GVHMR, HMR2, ViTPose, YOLO, SMPL, and SMPL-X model files are not bundled in 4DAnyone. The complete public inference closure is anchored by the immutable Hugging Face revision frozen in `fdanyone/assets.py`; users obtain those files through the applicable upstream or licensed setup flows.
+GVHMR, HMR2, ViTPose, YOLO, SMPL, and SMPL-X model files are not bundled in 4DAnyone. The complete public inference closure is anchored by the immutable Hugging Face revision frozen in `fdanyone/assets.py`. Users obtain those files through the applicable upstream or licensed setup flows.
 
 GVHMR permits use, copying, modification, and distribution for educational, research, and non-profit purposes only. It requires modifications based on the work to be open source and prohibits commercial use. Its checkpoints and transitive model assets may have additional terms.
 
@@ -22,7 +22,7 @@ GVHMR permits use, copying, modification, and distribution for educational, rese
 - Upstream code: <https://github.com/ZhengPeng7/BiRefNet>
 - License: MIT, copied at `third_party/licenses/BIREFNET_LICENSE`
 
-The adaptive preprocessing path downloads the pinned BiRefNet configuration, inference source, and weights on demand. It uses the resulting foreground masks for source cropping and source-framing analysis; those downloaded files retain their upstream terms.
+The adaptive preprocessing path downloads the pinned BiRefNet configuration, inference source, and weights on demand. It uses the resulting foreground masks for source cropping and source-framing analysis. Those downloaded files retain their upstream terms.
 
 ## PyTorch3D compatibility subset
 
@@ -39,7 +39,7 @@ Classic GVHMR imports PyTorch3D rotation conversions through a broader training-
 - Location: `data/source/pexels`
 - Terms: <https://www.pexels.com/license/>
 
-The companion Hugging Face repository distributes eight modified 121-frame excerpts for running the public demo; they are installed under the location above on demand. The excerpts derive from Pexels videos [10331522](https://www.pexels.com/video/10331522/), [2785536](https://www.pexels.com/video/2785536/), [5435720](https://www.pexels.com/video/5435720/), [5885633](https://www.pexels.com/video/5885633/), [5999210](https://www.pexels.com/video/5999210/), [6980035](https://www.pexels.com/video/6980035/), [7080903](https://www.pexels.com/video/7080903/), and [7480858](https://www.pexels.com/video/7480858/). Pexels permits its media to be used and modified for free and does not require attribution; the source links are retained for provenance and creator credit.
+The companion Hugging Face repository distributes eight modified 121-frame excerpts for running the public demo. They are installed under the location above on demand. The excerpts derive from Pexels videos [10331522](https://www.pexels.com/video/10331522/), [2785536](https://www.pexels.com/video/2785536/), [5435720](https://www.pexels.com/video/5435720/), [5885633](https://www.pexels.com/video/5885633/), [5999210](https://www.pexels.com/video/5999210/), [6980035](https://www.pexels.com/video/6980035/), [7080903](https://www.pexels.com/video/7080903/), and [7480858](https://www.pexels.com/video/7480858/). Pexels permits its media to be used and modified for free and does not require attribution. The source links are retained for provenance and creator credit.
 
 ## DiffSynth-Studio inference runtime
 
@@ -71,13 +71,13 @@ The retained schema material is conservatively treated as Sapiens2-derived and t
 
 ## Model and body assets
 
-The 4DAnyone checkpoint and sanitized MHR70 sparse regression tensors are first-party release artifacts licensed under Apache-2.0, published at the Hugging Face revision frozen in `fdanyone/assets.py`. The regressor file also embeds the exact keypoint-name order required to interpret those tensors; that schema material retains the Sapiens2 notice above and is not relicensed by the tensor license. Wan VAE/T5/tokenizer, GVHMR checkpoints, HMR2, ViTPose, detector weights, and SMPL-X body models remain third-party assets. The redistributable files are mirrored by the companion Hugging Face repository; users obtain SMPL-X from its official site and remain responsible for every applicable license.
+The 4DAnyone checkpoint and sanitized MHR70 sparse regression tensors are first-party release artifacts licensed under Apache-2.0, published at the Hugging Face revision frozen in `fdanyone/assets.py`. The regressor file also embeds the exact keypoint-name order required to interpret those tensors. That schema material retains the Sapiens2 notice above and is not relicensed by the tensor license. Wan VAE/T5/tokenizer, GVHMR checkpoints, HMR2, ViTPose, detector weights, and SMPL-X body models remain third-party assets. The redistributable files are mirrored by the companion Hugging Face repository. Users obtain SMPL-X from its official site and remain responsible for every applicable license.
 
-The frozen base-model assets come from the official [Wan2.2-TI2V-5B](https://huggingface.co/Wan-AI/Wan2.2-TI2V-5B) repository at revision `37685f96025fc1425edccdd4b2bca3836ae917ff` and the official [Wan2.1-T2V-1.3B](https://huggingface.co/Wan-AI/Wan2.1-T2V-1.3B) repository at revision `3f40b6dc4ca5c02dd23c9db74d9d2ccb82903b86`. Their official model cards license those model assets under Apache-2.0; the redistributed copies are pinned by the frozen Hugging Face revision.
+The frozen base-model assets come from the official [Wan2.2-TI2V-5B](https://huggingface.co/Wan-AI/Wan2.2-TI2V-5B) repository at revision `37685f96025fc1425edccdd4b2bca3836ae917ff` and the official [Wan2.1-T2V-1.3B](https://huggingface.co/Wan-AI/Wan2.1-T2V-1.3B) repository at revision `3f40b6dc4ca5c02dd23c9db74d9d2ccb82903b86`. Their official model cards license those model assets under Apache-2.0. The redistributed copies are pinned by the frozen Hugging Face revision.
 
-The MHR70 asset is a sanitized inference artifact containing only the sparse support/weight tensors, keypoint names, and a path-free structural schema. The first-party regression tensors are redistributed under Apache-2.0; the embedded name/order metadata remains covered by the schema notice above.
+The MHR70 asset is a sanitized inference artifact containing only the sparse support/weight tensors, keypoint names, and a path-free structural schema. The first-party regression tensors are redistributed under Apache-2.0. The embedded name/order metadata remains covered by the schema notice above.
 
-That regressor was trained by the 4DAnyone project on DNA-Rendering frames, using outputs from [SAM 3D Body](https://github.com/facebookresearch/sam-3d-body) and the [Momentum Human Rig](https://github.com/facebookresearch/MHR) conversion tools. SAM 3D Body is governed by the SAM License, MHR source is Apache-2.0, and DNA-Rendering access requires a separate signed dataset agreement. The regressor is not bundled in the source repository; its Hugging Face model card must retain these source-model and dataset citations alongside the split tensor/schema license declaration in this notice.
+That regressor was trained by the 4DAnyone project on DNA-Rendering frames, using outputs from [SAM 3D Body](https://github.com/facebookresearch/sam-3d-body) and the [Momentum Human Rig](https://github.com/facebookresearch/MHR) conversion tools. SAM 3D Body is governed by the SAM License, MHR source is Apache-2.0, and DNA-Rendering access requires a separate signed dataset agreement. The regressor is not bundled in the source repository. Its Hugging Face model card must retain these source-model and dataset citations alongside the split tensor/schema license declaration in this notice.
 
 ## VGG-19 perceptual reconstruction
 
@@ -86,4 +86,4 @@ That regressor was trained by the 4DAnyone project on DNA-Rendering frames, usin
 - MatConvNet distribution: [imagenet-vgg-verydeep-19](https://www.vlfeat.org/matconvnet/pretrained/), source MD5 `106118b7cf60435e6d8e04f6a6dc3657`
 - Model license: [Creative Commons Attribution 4.0 International](https://creativecommons.org/licenses/by/4.0/)
 
-The optional `splatfacto-perceptual` method uses a custom pixel-plus-feature objective rather than standard LPIPS. The companion Hugging Face repository contains a modified copy of the VGG-19 model: MatConvNet filters are transposed into PyTorch layout and serialized as safetensors, while the unused classifier and final two convolution layers are omitted. The retained tensor values are otherwise unchanged. Credit remains with Karen Simonyan and Andrew Zisserman; users must preserve that attribution and the CC BY 4.0 license when redistributing the converted weights.
+The optional `splatfacto-perceptual` method uses a custom pixel-plus-feature objective rather than standard LPIPS. The companion Hugging Face repository contains a modified copy of the VGG-19 model: MatConvNet filters are transposed into PyTorch layout and serialized as safetensors, while the unused classifier and final two convolution layers are omitted. The retained tensor values are otherwise unchanged. Credit remains with Karen Simonyan and Andrew Zisserman. Users must preserve that attribution and the CC BY 4.0 license when redistributing the converted weights.

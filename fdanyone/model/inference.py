@@ -1,14 +1,15 @@
 """Hydra/Lightning-free multi-view generation.
 
 RCP and final target generation share one source encoding and prompt embedding.
-Target groups execute sequentially on one GPU; TCR optionally shifts their
-membership between denoising steps.
+Target groups execute sequentially on one GPU or concurrently across multiple
+GPUs; TCR optionally shifts their membership between denoising steps.
 """
 
 from __future__ import annotations
 
 import gc
 import logging
+import math
 import time
 from collections.abc import Iterable
 from dataclasses import dataclass
@@ -20,6 +21,8 @@ from PIL import Image
 from fdanyone.assets import BaseAssets
 from fdanyone.config import INFERENCE
 from fdanyone.errors import FourDAnyoneError
+from fdanyone.model.denoise import denoise_group
+from fdanyone.model.distributed import denoise_targets_distributed, select_worker_devices
 from fdanyone.model.loader import load_pipeline
 from fdanyone.model.routing import routing_steps
 from fdanyone.skeleton.pipeline import Conditioning, SkeletonVideo
@@ -41,6 +44,7 @@ class GeneratedViews:
     elapsed_seconds: dict[str, float]
     peak_vram_allocated_bytes: int
     peak_vram_reserved_bytes: int
+    parallelism: dict[str, object] | None = None
 
 
 def _empty_cuda_cache() -> None:
@@ -87,15 +91,15 @@ def _channels_last_source_layout(video):
     return video.contiguous(memory_format=torch.channels_last_3d)
 
 
-def _encode_prompt(pipe, device: str) -> dict[str, object]:
+def _encode_prompt(pipe, device: str):
     import torch
 
     _move_model(pipe.text_encoder, device)
     with torch.inference_mode(), _bf16_autocast():
         context = pipe.prompter.encode_prompt(INFERENCE.prompt, positive=True, device=device)
-    prompt = {"context": context.detach().to("cpu")}
+    context = context.detach().to("cpu")
     _offload_model(pipe.text_encoder)
-    return prompt
+    return context
 
 
 def _encode_videos(pipe, videos, device: str):
@@ -164,7 +168,7 @@ def _skeleton_group(
 def _denoise_rcp(
     pipe,
     src_latents,
-    prompt,
+    context,
     camera_ids: tuple[int, ...],
     skeletons: tuple[SkeletonVideo, ...],
     skeleton_cache: dict[SkeletonVideo, object],
@@ -183,24 +187,21 @@ def _denoise_rcp(
     )
     latents = _noise(pipe, len(skeletons), INFERENCE.num_frames, seed, device)
     source = src_latents.to(dtype=pipe.torch_dtype, device=device)
-    context = {name: value.to(dtype=pipe.torch_dtype, device=device) for name, value in prompt.items()}
+    context = context.to(dtype=pipe.torch_dtype, device=device)
     # Preserve the reviewed RCP tensor layout: it changes CUDA kernel selection.
     # Target generation below materializes each sequential group contiguously.
     skeleton_tensor = _skeleton_group(skeleton_cache, skeletons, device, channels_last=True)
 
     with torch.inference_mode(), _bf16_autocast():
-        for timestep in tqdm(pipe.scheduler.timesteps, desc=f"RCP 1-to-{len(camera_ids)}"):
-            batched_timestep = timestep.unsqueeze(0).to(dtype=pipe.torch_dtype, device=device)
-            batched_timestep = torch.cat([batched_timestep] * len(skeletons), dim=0)
-            prediction = pipe.dit(
-                x=latents,
-                x_src=source,
-                timestep=batched_timestep,
-                skeletons=skeleton_tensor,
-                **context,
-                **pipe.prepare_extra_input(latents),
+        for step_index, _ in enumerate(tqdm(pipe.scheduler.timesteps, desc=f"RCP 1-to-{len(camera_ids)}")):
+            latents = denoise_group(
+                pipe,
+                latents,
+                source,
+                context,
+                skeleton_tensor,
+                step_index,
             )
-            latents = pipe.scheduler.step(prediction, timestep, latents)
     return latents.detach().to("cpu")
 
 
@@ -290,39 +291,30 @@ def _decode_rcp(
     return tuple(frame_outputs), tuple(video_outputs)
 
 
-def _denoise_targets(
+def _denoise_targets_single(
     pipe,
     src_latents,
-    prompt,
+    context,
     skeletons: tuple[SkeletonVideo, ...],
     skeleton_cache: dict[SkeletonVideo, object],
-    view_plan: ViewPlan,
+    initial_latents,
+    routes,
     device: str,
-    seed: int,
 ):
     import torch
     from tqdm.auto import tqdm
 
-    num_views = len(skeletons)
-    if num_views != view_plan.num_target_views:
-        raise FourDAnyoneError(
-            f"Target generation requires {view_plan.num_target_views} skeleton views, got {num_views}."
-        )
+    num_views = initial_latents.shape[0]
+    if len(skeletons) != num_views:
+        raise FourDAnyoneError(f"Target generation requires {num_views} skeleton views, got {len(skeletons)}.")
     pipe.scheduler.set_timesteps(
         INFERENCE.num_inference_steps,
         denoising_strength=INFERENCE.denoising_strength,
         shift=INFERENCE.scheduler_shift,
     )
-    latents = _noise(pipe, num_views, INFERENCE.num_frames, seed, device)
+    latents = initial_latents
     source = src_latents.to(dtype=pipe.torch_dtype, device=device)
-    context = {name: value.to(dtype=pipe.torch_dtype, device=device) for name, value in prompt.items()}
-    routes = routing_steps(
-        views_per_layer=view_plan.views_per_layer,
-        num_layers=view_plan.num_layers,
-        group_size=view_plan.views_per_group,
-        num_steps=INFERENCE.num_inference_steps,
-        enable_tcr=view_plan.enable_tcr,
-    )
+    context = context.to(dtype=pipe.torch_dtype, device=device)
 
     with torch.inference_mode(), _bf16_autocast():
         for step_index, groups in enumerate(tqdm(routes, desc=f"Generate {num_views} target views")):
@@ -334,20 +326,16 @@ def _denoise_targets(
                     (skeletons[view_index] for view_index in view_indices),
                     device,
                 )
-                timestep = pipe.scheduler.timesteps[step_index]
-                batched_timestep = timestep.unsqueeze(0).to(dtype=pipe.torch_dtype, device=device)
-                batched_timestep = torch.cat([batched_timestep] * len(view_indices), dim=0)
-                prediction = pipe.dit(
-                    x=local_latents,
-                    x_src=source,
-                    timestep=batched_timestep,
-                    skeletons=local_skeletons,
-                    **context,
-                    **pipe.prepare_extra_input(local_latents),
+                local_latents = denoise_group(
+                    pipe,
+                    local_latents,
+                    source,
+                    context,
+                    local_skeletons,
+                    step_index,
                 )
-                local_latents = pipe.scheduler.step(prediction, timestep, local_latents)
                 latents.index_copy_(0, index, local_latents)
-                del local_latents, local_skeletons, prediction
+                del local_latents, local_skeletons
     return latents.detach().to("cpu")
 
 
@@ -384,7 +372,7 @@ def generate_views(
     checkpoint_path: str | Path,
     assets: BaseAssets,
     output_dir: str | Path,
-    device: str,
+    devices: tuple[str, ...],
     seed: int,
 ) -> GeneratedViews:
     """Generate the proposal (when enabled) and the requested target views."""
@@ -395,6 +383,9 @@ def generate_views(
         raise FourDAnyoneError("Generation requires the frozen 121-frame contract.")
     if seed < 0:
         raise FourDAnyoneError(f"seed must be non-negative, got {seed}.")
+    if not devices:
+        raise FourDAnyoneError("Generation requires at least one CUDA device.")
+    device = devices[0]
     device_index = int(device.removeprefix("cuda:"))
     LOGGER.info("Using %s (%s)", device, torch.cuda.get_device_name(device_index))
 
@@ -412,7 +403,7 @@ def generate_views(
     torch.cuda.reset_peak_memory_stats(device_index)
 
     started = time.monotonic()
-    prompt = _encode_prompt(pipe, device)
+    context = _encode_prompt(pipe, device)
     loaded.release_text_encoder()
     timings["prompt"] = time.monotonic() - started
 
@@ -433,7 +424,7 @@ def generate_views(
         rcp_latents = _denoise_rcp(
             pipe,
             source_latents,
-            prompt,
+            context,
             view_plan.rcp_camera_ids,
             conditioning.rcp_skeletons,
             skeleton_cache,
@@ -468,19 +459,66 @@ def generate_views(
         timings["rcp_decode_and_reference_encode"] = time.monotonic() - started
 
     started = time.monotonic()
-    _load_skeleton_cache(conditioning, conditioning.target_skeletons, skeleton_cache)
-    _move_model(pipe.dit, device)
-    target_latents = _denoise_targets(
-        pipe,
-        target_sources,
-        prompt,
-        conditioning.target_skeletons,
-        skeleton_cache,
-        view_plan,
-        device,
-        seed,
+    routes = routing_steps(
+        views_per_layer=view_plan.views_per_layer,
+        num_layers=view_plan.num_layers,
+        group_size=view_plan.views_per_group,
+        num_steps=INFERENCE.num_inference_steps,
+        enable_tcr=view_plan.enable_tcr,
     )
-    _offload_model(pipe.dit)
+    initial_latents = _noise(pipe, view_plan.num_target_views, INFERENCE.num_frames, seed, device)
+    worker_devices = select_worker_devices(devices, view_plan.num_groups)
+    if len(worker_devices) < len(devices):
+        LOGGER.info(
+            "Using %d of %d candidate GPUs for %d target groups",
+            len(worker_devices),
+            len(devices),
+            view_plan.num_groups,
+        )
+
+    parallelism = None
+    if len(worker_devices) > 1:
+        # RCP has finished, so the parent no longer needs a DiT replica. Each
+        # spawned NCCL rank loads its own copy directly onto its assigned GPU.
+        pipe.dit = None
+        initial_latents = initial_latents.to("cpu")
+        skeleton_cache.clear()
+        _empty_cuda_cache()
+        target_latents, workers = denoise_targets_distributed(
+            src_latents=target_sources,
+            context=context,
+            initial_latents=initial_latents,
+            conditioning=conditioning,
+            routes=routes,
+            checkpoint_path=checkpoint_path,
+            work_dir=root / "distributed",
+            devices=worker_devices,
+            denoising_strength=INFERENCE.denoising_strength,
+            scheduler_shift=INFERENCE.scheduler_shift,
+        )
+        parallelism = {
+            "backend": "nccl",
+            "candidate_devices": list(devices),
+            "used_devices": list(worker_devices),
+            "groups_per_step": view_plan.num_groups,
+            "waves_per_step": math.ceil(view_plan.num_groups / len(worker_devices)),
+            "workers": workers,
+        }
+    else:
+        _load_skeleton_cache(conditioning, conditioning.target_skeletons, skeleton_cache)
+        _move_model(pipe.dit, device)
+        target_latents = _denoise_targets_single(
+            pipe,
+            target_sources,
+            context,
+            conditioning.target_skeletons,
+            skeleton_cache,
+            initial_latents,
+            routes,
+            device,
+        )
+        _offload_model(pipe.dit)
+    del initial_latents
     timings["target_denoise"] = time.monotonic() - started
 
     started = time.monotonic()
@@ -492,8 +530,18 @@ def generate_views(
     timings["target_decode"] = time.monotonic() - started
     peak_vram_allocated = int(torch.cuda.max_memory_allocated(device_index))
     peak_vram_reserved = int(torch.cuda.max_memory_reserved(device_index))
+    if parallelism is not None:
+        workers = parallelism["workers"]
+        peak_vram_allocated = max(
+            peak_vram_allocated,
+            *(int(worker["peak_vram_allocated_bytes"]) for worker in workers),
+        )
+        peak_vram_reserved = max(
+            peak_vram_reserved,
+            *(int(worker["peak_vram_reserved_bytes"]) for worker in workers),
+        )
 
-    del target_latents, target_sources, source_latents, prompt, skeleton_cache, loaded, pipe
+    del target_latents, target_sources, source_latents, context, skeleton_cache, loaded, pipe
     _empty_cuda_cache()
     return GeneratedViews(
         rcp_videos=rcp_videos,
@@ -504,4 +552,5 @@ def generate_views(
         elapsed_seconds=timings,
         peak_vram_allocated_bytes=peak_vram_allocated,
         peak_vram_reserved_bytes=peak_vram_reserved,
+        parallelism=parallelism,
     )

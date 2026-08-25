@@ -84,12 +84,13 @@ python inference.py \
 
 ### Arguments
 
-Run `python inference.py --help` for the full list. Key camera-layout arguments are:
+Run `python inference.py --help` for the full list. Key arguments are:
 
-- `views_per_layer`: number of evenly spaced views per pitch layer; must be divisible by 4 or 6.
-- `layer_pitches`: pitch angles in degrees, one per layer; positive values place cameras above the subject. Total views are `views_per_layer × len(layer_pitches)`.
-- `start_yaw`: horizontal angle of the first view, in degrees; yaw `0` is the front view.
+- `views_per_layer`: number of evenly spaced views per pitch layer. It must be divisible by 4 or 6.
+- `layer_pitches`: pitch angles in degrees, one per layer. Positive values place cameras above the subject. Total views are `views_per_layer × len(layer_pitches)`.
+- `start_yaw`: horizontal angle of the first view, in degrees. Yaw `0` is the front view.
 - `yaw_span`: horizontal range covered by each camera layer, in degrees.
+- `gpu_ids`: GPU IDs to use for parallel denoising. Defaults to all visible GPUs.
 
 ### Output
 
@@ -111,10 +112,10 @@ data/
 
 Use an input video that:
 
-- is 720p or higher, with 1080p recommended;
-- uses a 9:16 portrait aspect ratio;
-- shows one person in a full-body or upper-body shot;
-- has at least 121 frames;
+- is 720p or higher, with 1080p recommended.
+- uses a 9:16 portrait aspect ratio.
+- shows one person in a full-body or upper-body shot.
+- has at least 121 frames.
 - contains only mild camera motion.
 
 ### Inference Efficiency

@@ -153,6 +153,23 @@ def export_result(
     conditioning_metadata = json.loads((conditioning.root / "metadata.json").read_text())
     camera_records = _target_cameras(camera_payload, view_plan.num_target_views)
     total_elapsed = time.monotonic() - pipeline_started
+    generation_metadata = {
+        "seed": generated.seed,
+        "view_plan": {
+            **view_plan.to_dict(),
+            "num_layers": view_plan.num_layers,
+            "num_target_views": view_plan.num_target_views,
+            "groups_per_layer": view_plan.groups_per_layer,
+        },
+        "attention_backend": attention_backend,
+        "inference_steps": INFERENCE.num_inference_steps,
+        "elapsed_seconds": generated.elapsed_seconds,
+        "total_elapsed_seconds": total_elapsed,
+        "peak_vram_allocated_bytes": generated.peak_vram_allocated_bytes,
+        "peak_vram_reserved_bytes": generated.peak_vram_reserved_bytes,
+    }
+    if generated.parallelism is not None:
+        generation_metadata["parallelism"] = generated.parallelism
 
     metadata = {
         "input": {
@@ -174,21 +191,7 @@ def export_result(
             "skeleton_draw_scale": conditioning_metadata["skeleton_draw_scale"],
         },
         "model": dict(model_identity),
-        "generation": {
-            "seed": generated.seed,
-            "view_plan": {
-                **view_plan.to_dict(),
-                "num_layers": view_plan.num_layers,
-                "num_target_views": view_plan.num_target_views,
-                "groups_per_layer": view_plan.groups_per_layer,
-            },
-            "attention_backend": attention_backend,
-            "inference_steps": INFERENCE.num_inference_steps,
-            "elapsed_seconds": generated.elapsed_seconds,
-            "total_elapsed_seconds": total_elapsed,
-            "peak_vram_allocated_bytes": generated.peak_vram_allocated_bytes,
-            "peak_vram_reserved_bytes": generated.peak_vram_reserved_bytes,
-        },
+        "generation": generation_metadata,
         "output": {
             "rcp_views": len(output_sparse),
             "target_views": len(output_dense),

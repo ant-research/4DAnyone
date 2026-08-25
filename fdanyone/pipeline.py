@@ -20,7 +20,7 @@ from fdanyone.assets import (
     resolve_regressor,
 )
 from fdanyone.config import INFERENCE
-from fdanyone.device import select_cuda_device
+from fdanyone.device import select_cuda_devices
 from fdanyone.download import ensure_example_video, ensure_models, ensure_smplx
 from fdanyone.errors import ConfigurationError
 from fdanyone.io import AtomicResultDirectory, remove_tree, write_json
@@ -173,7 +173,7 @@ def run_pipeline(
     checkpoint_path: str | None,
     mhr70_regressor_path: str | None,
     gvhmr_root: str,
-    device: str,
+    gpu_ids: list[int] | None,
     start_time: float,
     target_fps: str | int | float,
     seed: int,
@@ -210,7 +210,8 @@ def run_pipeline(
             f"4DAnyone result already exists: {atomic.destination}. Choose a new --data_dir or input filename."
         )
     validate_required_video_codecs()
-    device, _ = select_cuda_device(device)
+    devices = select_cuda_devices(gpu_ids)
+    device = devices[0]
 
     ensure_example_video(video_path)
     # Resolve the licensed body model before starting the much larger public
@@ -304,7 +305,7 @@ def run_pipeline(
                 checkpoint_path=checkpoint,
                 assets=base_assets,
                 output_dir=scratch / "generation",
-                device=device,
+                devices=devices,
                 seed=seed,
             )
             summary = export_result(
