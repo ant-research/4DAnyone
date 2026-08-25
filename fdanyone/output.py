@@ -181,8 +181,6 @@ def export_result(
                 "num_layers": view_plan.num_layers,
                 "num_target_views": view_plan.num_target_views,
                 "groups_per_layer": view_plan.groups_per_layer,
-                "tcr_active": view_plan.tcr_active,
-                "routing_topology": "circular",
             },
             "attention_backend": attention_backend,
             "inference_steps": INFERENCE.num_inference_steps,

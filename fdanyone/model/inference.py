@@ -321,7 +321,7 @@ def _denoise_targets(
         num_layers=view_plan.num_layers,
         group_size=view_plan.views_per_group,
         num_steps=INFERENCE.num_inference_steps,
-        enable_tcr=view_plan.tcr_active,
+        enable_tcr=view_plan.enable_tcr,
     )
 
     with torch.inference_mode(), _bf16_autocast():

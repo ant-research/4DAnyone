@@ -56,10 +56,6 @@ class ViewPlan:
         return self.groups_per_layer * self.num_layers
 
     @property
-    def tcr_active(self) -> bool:
-        return self.enable_tcr
-
-    @property
     def target_views(self) -> tuple[TargetView, ...]:
         step = self.yaw_span / self.views_per_layer
         return tuple(
