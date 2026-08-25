@@ -117,6 +117,10 @@ Use an input video that:
 - has at least 121 frames;
 - contains only mild camera motion.
 
+### Inference Efficiency
+
+See [Inference performance](docs/inference_performance.md) for measured 6-view runtimes and peak GPU memory usage on H20-3E, H200, and RTX A6000 GPUs.
+
 ## 3DGS Reconstruction
 
 See the [nerfstudio guide](docs/nerfstudio.md) for details.
