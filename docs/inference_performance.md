@@ -11,20 +11,35 @@ python inference.py \
 
 Each configuration reports the median of three runs.
 
-| GPU | Backend | GVHMR (min) | Skeleton extraction (min) | Denoising (min) | Peak CUDA allocated (GiB) | GPU memory (GiB) |
-| --- | --- | ---: | ---: | ---: | ---: | ---: |
-| H200 | SDPA | 0.94 | 0.57 | 9.17 | 43.34 | 140.40 |
-| H200 | FlashAttention-3 | 0.94 | 0.57 | 7.84 | 43.34 | 140.40 |
-| H20-3E | SDPA | 0.97 | 0.55 | 20.59 | 43.34 | 140.40 |
-| H20-3E | FlashAttention-3 | 0.97 | 0.55 | 16.62 | 43.34 | 140.40 |
-| RTX A6000 | SDPA | 1.70 | 1.06 | 22.93 | 43.32 | 47.99 |
+## Denoising
 
-Metrics are defined as follows:
+This table compares denoising time across attention backends.
+
+- `SDPA`, `FlashAttention-3`, and `SageAttention`: denoising time using each attention backend.
+- `Peak CUDA allocated`: maximum live tensor allocation during generation. It was identical across the tested backends on each GPU.
+- `GPU memory`: total device memory capacity.
+- `—`: backend unavailable on that GPU.
+
+| GPU | SDPA (min) | FlashAttention-3 (min) | SageAttention (min) | Peak CUDA allocated (GiB) | GPU memory (GiB) |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| H200 | 9.17 | 7.84 | 7.86 | 43.34 | 140.40 |
+| H20-3E | 20.59 | 16.62 | 13.91 | 43.34 | 140.40 |
+| RTX 5880 Ada | 20.85 | — | 18.01 | 43.32 | 47.99 |
+| RTX A6000 | 22.93 | — | 22.75 | 43.32 | 47.99 |
+
+> [!NOTE]
+> SageAttention results use the official `sageattn` entry point, which automatically dispatches an architecture-specific kernel for each GPU.
+
+## Preprocessing
+
+This table reports preprocessing time before generation.
 
 - `GVHMR`: tracking, ViTPose, image-feature extraction, and motion prediction.
 - `Skeleton extraction`: target-view skeleton-condition rendering.
-- `Denoising`: the generation stage affected by the attention backend.
-- `Peak CUDA allocated`: the maximum live tensor allocation during generation.
 
-> [!NOTE]
-> On supported GPUs, FlashAttention-3 is selected automatically once installed.
+| GPU | GVHMR (min) | Skeleton extraction (min) |
+| --- | ---: | ---: |
+| H200 | 0.94 | 0.57 |
+| H20-3E | 0.97 | 0.55 |
+| RTX 5880 Ada | 0.94 | 1.00 |
+| RTX A6000 | 1.70 | 1.06 |

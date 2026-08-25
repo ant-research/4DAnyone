@@ -20,8 +20,6 @@ conda activate 4danyone
 pip install -r requirements.txt
 ```
 
-For faster inference, optionally install [FlashAttention-3](https://github.com/Dao-AILab/flash-attention/tree/main/hopper) or [SageAttention](https://github.com/thu-ml/SageAttention).
-
 Missing models and examples are downloaded automatically on first use. You can also download them manually:
 
 ```bash
@@ -108,6 +106,12 @@ data/
         └── dense/00.mp4 ... <N-1>.mp4       # generated target views
 ```
 
+### Inference Efficiency
+
+For faster inference on supported GPUs, optionally install [FlashAttention-3](https://github.com/Dao-AILab/flash-attention/tree/main/hopper) or [SageAttention](https://github.com/thu-ml/SageAttention). Our implementation automatically detects installed backends at runtime.
+
+See [Inference performance](docs/inference_performance.md) for measured 6-view runtimes and peak GPU memory usage on H20-3E, H200, RTX 5880 Ada, and RTX A6000 GPUs.
+
 ### Custom data
 
 Use an input video that:
@@ -117,10 +121,6 @@ Use an input video that:
 - shows one person in a full-body or upper-body shot.
 - has at least 121 frames.
 - contains only mild camera motion.
-
-### Inference Efficiency
-
-See [Inference performance](docs/inference_performance.md) for measured 6-view runtimes and peak GPU memory usage on H20-3E, H200, and RTX A6000 GPUs.
 
 ## 3DGS Reconstruction
 
