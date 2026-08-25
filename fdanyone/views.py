@@ -56,10 +56,6 @@ class ViewPlan:
         return self.groups_per_layer * self.num_layers
 
     @property
-    def closed_yaw(self) -> bool:
-        return self.yaw_span == 360
-
-    @property
     def tcr_active(self) -> bool:
         return self.enable_tcr
 
