@@ -11,13 +11,13 @@ python inference.py \
 
 Each configuration reports the median of three runs.
 
-| GPU | Backend | GVHMR (min) | Skeleton extraction (min) | Denoising (min) | Peak CUDA allocated (GiB) |
-| --- | --- | ---: | ---: | ---: | ---: |
-| H200 | SDPA | 0.94 | 0.57 | 9.17 | 43.34 |
-| H200 | FlashAttention-3 | 0.94 | 0.57 | 7.84 | 43.34 |
-| H20-3E | SDPA | 0.97 | 0.55 | 20.59 | 43.34 |
-| H20-3E | FlashAttention-3 | 0.97 | 0.55 | 16.62 | 43.34 |
-| RTX A6000 | SDPA | 1.70 | 1.06 | 22.93 | 43.32 |
+| GPU | Backend | GVHMR (min) | Skeleton extraction (min) | Denoising (min) | Peak CUDA allocated (GiB) | GPU memory (GiB) |
+| --- | --- | ---: | ---: | ---: | ---: | ---: |
+| H200 | SDPA | 0.94 | 0.57 | 9.17 | 43.34 | 140.40 |
+| H200 | FlashAttention-3 | 0.94 | 0.57 | 7.84 | 43.34 | 140.40 |
+| H20-3E | SDPA | 0.97 | 0.55 | 20.59 | 43.34 | 140.40 |
+| H20-3E | FlashAttention-3 | 0.97 | 0.55 | 16.62 | 43.34 | 140.40 |
+| RTX A6000 | SDPA | 1.70 | 1.06 | 22.93 | 43.32 | 47.99 |
 
 Metrics are defined as follows:
 
