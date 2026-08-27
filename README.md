@@ -8,6 +8,10 @@
 
 <p align="center">4DAnyone turns a casual monocular video into multi-view videos, enabling downstream 4DGS reconstruction.</p>
 
+## News
+
+- **2026-08-28**: Significantly reduced GPU memory usage while slightly improving speed. See [Inference performance](docs/inference_performance.md) for details.
+
 ## Installation
 
 ```bash

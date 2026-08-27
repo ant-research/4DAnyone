@@ -14,20 +14,38 @@ import math
 import os
 import socket
 import time
-from collections.abc import Callable, Iterable, Sequence
+from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import timedelta
 from pathlib import Path
-from typing import TypeVar
+from typing import TYPE_CHECKING, TypedDict
 
 from fdanyone.errors import FourDAnyoneError
+
+if TYPE_CHECKING:
+    from torch import Tensor
+
+    from fdanyone.model.conditioning import PoseFeatureBank
+    from fdanyone.model.loader import Denoiser
 
 LOGGER = logging.getLogger("fdanyone")
 
 CameraGroup = tuple[int, ...]
 StepGroups = tuple[CameraGroup, ...]
 Routes = tuple[StepGroups, ...]
-ResultT = TypeVar("ResultT")
+
+
+class WorkerReport(TypedDict):
+    """Per-rank measurements published by a distributed denoising worker."""
+
+    rank: int
+    device: str
+    device_name: str
+    attention_backend: str
+    model_load_seconds: float
+    denoise_seconds: float
+    peak_vram_allocated_bytes: int
+    peak_vram_reserved_bytes: int
 
 
 @dataclass(frozen=True)
@@ -38,7 +56,7 @@ class DistributedDenoiseRequest:
     routes: Routes
     denoising_strength: float
     scheduler_shift: float
-    skeleton_shape: tuple[int, ...]
+    pose_feature_shape: tuple[int, ...]
     init_method: str
 
 
@@ -93,68 +111,191 @@ def validate_routes(routes: Routes, num_views: int) -> None:
             )
 
 
-def run_group_schedule(
-    routes: Routes,
-    num_workers: int,
-    *,
-    execute_wave: Callable[[int, StepGroups], Sequence[ResultT]],
-    apply_result: Callable[[CameraGroup, ResultT], None],
-    finish_step: Callable[[int], None],
-) -> None:
-    """Execute group waves in route order and finish each step with a barrier."""
-
-    for step_index, groups in enumerate(routes):
-        for wave in group_waves(groups, num_workers):
-            results = tuple(execute_wave(step_index, wave))
-            if len(results) != len(wave):
-                raise RuntimeError(f"Distributed wave returned {len(results)} results for {len(wave)} camera groups.")
-            for group, result in zip(wave, results, strict=True):
-                apply_result(group, result)
-        finish_step(step_index)
-
-
 def _free_local_port() -> int:
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
         sock.bind(("127.0.0.1", 0))
         return int(sock.getsockname()[1])
 
 
-def _write_skeleton_tensor_file(conditioning, skeletons: Iterable, path: Path) -> tuple[int, ...]:
-    """Decode target skeletons once into a file-backed BF16 tensor."""
+def _resolve_empty_workspace(path: str | Path) -> Path:
+    """Validate the caller-owned transient directory used by spawned ranks."""
+
+    root = Path(path).expanduser().resolve()
+    if not root.is_dir():
+        raise ValueError(f"Distributed work_dir must be an existing directory: {root}")
+    if any(root.iterdir()):
+        raise ValueError(f"Distributed work_dir must be empty: {root}")
+    return root
+
+
+def _write_pose_feature_file(pose_features: PoseFeatureBank, path: Path) -> tuple[int, ...]:
+    """Write precomputed target pose features to a worker-shared BF16 tensor."""
 
     import torch
 
-    items = tuple(skeletons)
-    if not items:
-        raise FourDAnyoneError("Distributed target denoising requires at least one skeleton video.")
-
-    LOGGER.info("Preparing shared target skeleton 1/%d from %s", len(items), items[0].path.name)
-    first = conditioning.load_skeleton_tensor([items[0]]).to(dtype=torch.bfloat16, device="cpu").contiguous()
-    if first.ndim != 5 or first.shape[0] != 1:
-        raise FourDAnyoneError(f"Expected one 5D skeleton tensor, got shape {tuple(first.shape)}.")
-    shape = (len(items), *tuple(first.shape[1:]))
+    features = pose_features.features
+    if features.ndim != 5 or features.shape[0] <= 0:
+        raise FourDAnyoneError("Distributed target denoising requires at least one pose feature.")
+    shape = tuple(features.shape)
     numel = math.prod(shape)
     with path.open("xb") as handle:
-        handle.truncate(numel * first.element_size())
+        handle.truncate(numel * features.element_size())
     mapped = torch.from_file(str(path), shared=True, size=numel, dtype=torch.bfloat16).view(shape)
-    mapped[0].copy_(first[0])
-    del first
-    for camera_id, skeleton in enumerate(items[1:], start=1):
-        LOGGER.info(
-            "Preparing shared target skeleton %d/%d from %s",
-            camera_id + 1,
-            len(items),
-            skeleton.path.name,
-        )
-        tensor = conditioning.load_skeleton_tensor([skeleton]).to(dtype=torch.bfloat16, device="cpu").contiguous()
-        if tuple(tensor.shape[1:]) != shape[1:] or tensor.shape[0] != 1:
-            raise FourDAnyoneError(
-                f"Skeleton camera {camera_id} has shape {tuple(tensor.shape)}, expected {(1, *shape[1:])}."
-            )
-        mapped[camera_id].copy_(tensor[0])
-        del tensor
+    mapped.copy_(features)
     del mapped
     return shape
+
+
+@dataclass
+class _WorkerState:
+    """CUDA tensors and collectives owned by one spawned NCCL rank."""
+
+    rank: int
+    request: DistributedDenoiseRequest
+    denoiser: Denoiser
+    device: str
+    device_index: int
+    source: Tensor
+    context: Tensor
+    null_pose_feature: Tensor
+    pose_features: Tensor
+    latents: Tensor | None
+    pose_feature_batch: Tensor
+    latent_tail: tuple[int, ...]
+
+    @property
+    def is_primary(self) -> bool:
+        return self.rank == 0
+
+    @property
+    def world_size(self) -> int:
+        return len(self.request.devices)
+
+    def _scatter_latents(self, wave: StepGroups) -> Tensor:
+        import torch
+        import torch.distributed as dist
+
+        local_input = torch.empty(
+            (self.pose_feature_batch.shape[0], *self.latent_tail),
+            dtype=self.denoiser.dtype,
+            device=self.device,
+        )
+        scatter_list = None
+        if self.is_primary:
+            if self.latents is None:
+                raise RuntimeError("The primary distributed rank does not own canonical latents.")
+            scatter_list = [torch.zeros_like(local_input) for _ in range(self.world_size)]
+            for worker_index, group in enumerate(wave):
+                index = torch.tensor(group, dtype=torch.long, device=self.device)
+                scatter_list[worker_index].copy_(torch.index_select(self.latents, 0, index))
+        dist.scatter(local_input, scatter_list=scatter_list, src=0)
+        return local_input
+
+    def _denoise_local_group(self, local_input: Tensor, wave: StepGroups, step_index: int) -> Tensor:
+        import torch
+
+        if self.rank >= len(wave):
+            return torch.zeros_like(local_input)
+
+        from fdanyone.model.denoise import denoise_group
+
+        group = wave[self.rank]
+        for output_index, camera_id in enumerate(group):
+            self.pose_feature_batch[output_index].copy_(self.pose_features[camera_id])
+        with torch.inference_mode(), torch.autocast(device_type="cuda", dtype=torch.bfloat16):
+            return denoise_group(
+                self.denoiser,
+                local_input,
+                self.source,
+                self.context,
+                self.pose_feature_batch,
+                self.null_pose_feature,
+                step_index,
+            )
+
+    def _gather_and_commit(self, local_result: Tensor, wave: StepGroups) -> None:
+        import torch
+        import torch.distributed as dist
+
+        gathered = [torch.empty_like(local_result) for _ in range(self.world_size)] if self.is_primary else None
+        dist.gather(local_result, gather_list=gathered, dst=0)
+        if not self.is_primary:
+            return
+        if self.latents is None or gathered is None:
+            raise RuntimeError("The primary distributed rank cannot commit gathered latents.")
+        for group, result in zip(wave, gathered[: len(wave)], strict=True):
+            index = torch.tensor(group, dtype=torch.long, device=self.device)
+            self.latents.index_copy_(0, index, result)
+
+    def denoise(self) -> None:
+        """Run every route step, committing a complete step before TCR moves on."""
+
+        import torch.distributed as dist
+
+        for step_index, groups in enumerate(self.request.routes):
+            for wave in group_waves(groups, self.world_size):
+                local_input = self._scatter_latents(wave)
+                local_result = self._denoise_local_group(local_input, wave, step_index)
+                self._gather_and_commit(local_result, wave)
+                del local_input, local_result
+            dist.barrier(device_ids=[self.device_index])
+            if self.is_primary:
+                LOGGER.info("Completed target denoising step %d/%d", step_index + 1, len(self.request.routes))
+
+
+def _load_worker_state(rank: int, request: DistributedDenoiseRequest, denoiser: Denoiser) -> _WorkerState:
+    import torch
+
+    device = request.devices[rank]
+    payload = torch.load(
+        Path(request.work_dir) / "inputs.pt",
+        map_location="cpu",
+        weights_only=True,
+        mmap=True,
+    )
+    group_size = len(request.routes[0][0])
+    pose_features = torch.from_file(
+        str(Path(request.work_dir) / "pose_features.bf16"),
+        shared=False,
+        size=math.prod(request.pose_feature_shape),
+        dtype=torch.bfloat16,
+    ).view(request.pose_feature_shape)
+    denoiser.scheduler.set_timesteps(
+        len(request.routes),
+        denoising_strength=request.denoising_strength,
+        shift=request.scheduler_shift,
+    )
+    return _WorkerState(
+        rank=rank,
+        request=request,
+        denoiser=denoiser,
+        device=device,
+        device_index=int(device.removeprefix("cuda:")),
+        source=payload["source"].to(dtype=denoiser.dtype, device=device),
+        context=payload["context"].to(dtype=denoiser.dtype, device=device),
+        null_pose_feature=payload["null_pose_feature"].to(dtype=denoiser.dtype, device=device),
+        pose_features=pose_features,
+        latents=payload["initial_latents"].to(dtype=denoiser.dtype, device=device) if rank == 0 else None,
+        pose_feature_batch=torch.empty(
+            (group_size, *request.pose_feature_shape[1:]),
+            dtype=denoiser.dtype,
+            device=device,
+        ),
+        latent_tail=tuple(payload["initial_latents"].shape[1:]),
+    )
+
+
+def _publish_worker_result(state: _WorkerState, report: WorkerReport) -> None:
+    import torch
+
+    root = Path(state.request.work_dir)
+    if state.is_primary:
+        if state.latents is None:
+            raise RuntimeError("The primary distributed rank has no target latents to publish.")
+        temporary = root / ".target_latents.pt.tmp"
+        torch.save(state.latents.detach().to("cpu"), temporary)
+        os.replace(temporary, root / "target_latents.pt")
+    (root / f"rank-{state.rank}.json").write_text(json.dumps(report, indent=2, sort_keys=True) + "\n")
 
 
 def _worker(rank: int, request: DistributedDenoiseRequest) -> None:
@@ -163,7 +304,6 @@ def _worker(rank: int, request: DistributedDenoiseRequest) -> None:
     import torch
     import torch.distributed as dist
 
-    from fdanyone.model.denoise import denoise_group
     from fdanyone.model.loader import load_denoiser
     from fdanyone.vendor.diffsynth.models.wan_video_dit import get_attention_backend
 
@@ -181,8 +321,9 @@ def _worker(rank: int, request: DistributedDenoiseRequest) -> None:
     resolved_backend = get_attention_backend()
 
     model_started = time.monotonic()
-    pipe = load_denoiser(checkpoint_path=request.checkpoint_path, device=device)
-    pipe.dit.to(device)
+    denoiser = load_denoiser(checkpoint_path=request.checkpoint_path)
+    denoiser.model.to(device)
+    torch.cuda.synchronize(device_index)
     model_load_seconds = time.monotonic() - model_started
 
     dist.init_process_group(
@@ -193,104 +334,14 @@ def _worker(rank: int, request: DistributedDenoiseRequest) -> None:
         timeout=timedelta(minutes=30),
     )
     try:
-        payload = torch.load(
-            Path(request.work_dir) / "inputs.pt",
-            map_location="cpu",
-            weights_only=True,
-            mmap=True,
-        )
-        source = payload["source"].to(dtype=pipe.torch_dtype, device=device)
-        context = payload["context"].to(dtype=pipe.torch_dtype, device=device)
-        skeletons = torch.from_file(
-            str(Path(request.work_dir) / "skeletons.bf16"),
-            shared=False,
-            size=math.prod(request.skeleton_shape),
-            dtype=torch.bfloat16,
-        ).view(request.skeleton_shape)
-        routes = request.routes
-        group_size = len(routes[0][0])
-        latent_shape = tuple(payload["initial_latents"].shape)
-        latent_tail = latent_shape[1:]
-        latents = payload["initial_latents"].to(dtype=pipe.torch_dtype, device=device) if rank == 0 else None
-
-        pipe.scheduler.set_timesteps(
-            len(routes),
-            denoising_strength=request.denoising_strength,
-            shift=request.scheduler_shift,
-        )
+        state = _load_worker_state(rank, request, denoiser)
         dist.barrier(device_ids=[device_index])
         denoise_started = time.monotonic()
-
-        def execute_wave(step_index: int, wave: StepGroups):
-            local_input = torch.empty((group_size, *latent_tail), dtype=pipe.torch_dtype, device=device)
-            if rank == 0:
-                scatter_list = []
-                for worker_index in range(len(request.devices)):
-                    padded = torch.zeros_like(local_input)
-                    if worker_index < len(wave):
-                        group = wave[worker_index]
-                        index = torch.tensor(group, dtype=torch.long, device=device)
-                        padded[: len(group)].copy_(torch.index_select(latents, 0, index))
-                    scatter_list.append(padded)
-            else:
-                scatter_list = None
-            dist.scatter(local_input, scatter_list=scatter_list, src=0)
-            if scatter_list is not None:
-                del scatter_list
-
-            local_result = torch.zeros_like(local_input)
-            if rank < len(wave):
-                group = wave[rank]
-                valid = len(group)
-                local_latents = local_input[:valid]
-                cpu_index = torch.tensor(group, dtype=torch.long, device="cpu")
-                local_skeletons = torch.index_select(skeletons, 0, cpu_index).to(device=device)
-                with torch.inference_mode(), torch.autocast(device_type="cuda", dtype=torch.bfloat16):
-                    updated = denoise_group(
-                        pipe,
-                        local_latents,
-                        source,
-                        context,
-                        local_skeletons,
-                        step_index,
-                    )
-                local_result[:valid].copy_(updated)
-                del local_latents, local_skeletons, updated
-
-            gather_list = [torch.empty_like(local_result) for _ in request.devices] if rank == 0 else None
-            dist.gather(local_result, gather_list=gather_list, dst=0)
-            del local_input, local_result
-            if rank == 0:
-                return tuple(gather_list[: len(wave)])
-            return (None,) * len(wave)
-
-        def apply_result(group: CameraGroup, result) -> None:
-            if rank != 0:
-                return
-            index = torch.tensor(group, dtype=torch.long, device=device)
-            latents.index_copy_(0, index, result[: len(group)])
-
-        def finish_step(step_index: int) -> None:
-            dist.barrier(device_ids=[device_index])
-            if rank == 0:
-                LOGGER.info("Completed target denoising step %d/%d", step_index + 1, len(routes))
-
-        run_group_schedule(
-            routes,
-            len(request.devices),
-            execute_wave=execute_wave,
-            apply_result=apply_result,
-            finish_step=finish_step,
-        )
+        state.denoise()
         torch.cuda.synchronize(device_index)
         denoise_seconds = time.monotonic() - denoise_started
 
-        if rank == 0:
-            temporary = Path(request.work_dir) / ".target_latents.pt.tmp"
-            torch.save(latents.detach().to("cpu"), temporary)
-            os.replace(temporary, Path(request.work_dir) / "target_latents.pt")
-
-        report = {
+        report: WorkerReport = {
             "rank": rank,
             "device": device,
             "device_name": torch.cuda.get_device_name(device_index),
@@ -300,8 +351,7 @@ def _worker(rank: int, request: DistributedDenoiseRequest) -> None:
             "peak_vram_allocated_bytes": int(torch.cuda.max_memory_allocated(device_index)),
             "peak_vram_reserved_bytes": int(torch.cuda.max_memory_reserved(device_index)),
         }
-        report_path = Path(request.work_dir) / f"rank-{rank}.json"
-        report_path.write_text(json.dumps(report, indent=2, sort_keys=True) + "\n")
+        _publish_worker_result(state, report)
         dist.barrier(device_ids=[device_index])
     finally:
         if dist.is_initialized():
@@ -310,17 +360,17 @@ def _worker(rank: int, request: DistributedDenoiseRequest) -> None:
 
 def denoise_targets_distributed(
     *,
-    src_latents,
-    context,
-    initial_latents,
-    conditioning,
+    src_latents: Tensor,
+    context: Tensor,
+    initial_latents: Tensor,
+    pose_features: PoseFeatureBank,
     routes: Routes,
     checkpoint_path: str | Path,
     work_dir: str | Path,
     devices: Sequence[str],
     denoising_strength: float,
     scheduler_shift: float,
-) -> tuple[object, list[dict[str, object]]]:
+) -> tuple[Tensor, list[WorkerReport]]:
     """Prepare shared inputs, launch NCCL workers, and return canonical latents."""
 
     import torch
@@ -334,20 +384,19 @@ def denoise_targets_distributed(
     validate_routes(routes, int(initial_latents.shape[0]))
     num_groups = len(routes[0])
 
-    root = Path(work_dir).expanduser().resolve()
-    root.mkdir(parents=True, exist_ok=False)
+    root = _resolve_empty_workspace(work_dir)
     torch.save(
         {
             "source": src_latents.detach().to("cpu").contiguous(),
             "context": context.detach().to("cpu").contiguous(),
+            "null_pose_feature": pose_features.null_features,
             "initial_latents": initial_latents.detach().to("cpu").contiguous(),
         },
         root / "inputs.pt",
     )
-    skeleton_shape = _write_skeleton_tensor_file(
-        conditioning,
-        conditioning.target_skeletons,
-        root / "skeletons.bf16",
+    pose_feature_shape = _write_pose_feature_file(
+        pose_features,
+        root / "pose_features.bf16",
     )
     request = DistributedDenoiseRequest(
         checkpoint_path=str(Path(checkpoint_path).expanduser().resolve()),
@@ -356,7 +405,7 @@ def denoise_targets_distributed(
         routes=routes,
         denoising_strength=denoising_strength,
         scheduler_shift=scheduler_shift,
-        skeleton_shape=skeleton_shape,
+        pose_feature_shape=pose_feature_shape,
         init_method=f"tcp://127.0.0.1:{_free_local_port()}",
     )
     LOGGER.info(
@@ -374,7 +423,7 @@ def denoise_targets_distributed(
     if not output_path.is_file():
         raise FourDAnyoneError("Multi-GPU target denoising finished without publishing target latents.")
     latents = torch.load(output_path, map_location="cpu", weights_only=True)
-    reports = []
+    reports: list[WorkerReport] = []
     for rank in range(len(devices)):
         report_path = root / f"rank-{rank}.json"
         if not report_path.is_file():

@@ -31,17 +31,6 @@ class InferenceConfig:
     num_inference_steps: int = 24
     denoising_strength: float = 1.0
     scheduler_shift: float = 5.0
-    use_mvs_attention: bool = True
-    mvs_attention_range: tuple[int | None, int | None, int | None] = (0, None, 1)
-    disable_video_attention: bool = False
-    use_4d_attention: bool = False
-    use_source_self_attention: bool = False
-    use_source_cross_attention: bool = False
-    freqs_src_shift: int = 121
-    use_pose_encoder: bool = True
-    pose_encoder_type: str = "rgb"
-    use_camera_encoder: bool = False
-    use_lbm: bool = False
     tiled_vae: bool = False
     vae_tile_size: tuple[int, int] = (52, 30)
     vae_tile_stride: tuple[int, int] = (26, 15)

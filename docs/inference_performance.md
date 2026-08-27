@@ -3,7 +3,6 @@
 This page reports inference efficiency for the [6-view full-orbit](../README.md#6-view-full-orbit) example using:
 
 ```bash
-PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True \
 python inference.py \
     --video_path "data/source/pexels/2785536-uhd_2160_3840_25fps.mp4" \
     --views_per_layer 6
@@ -22,10 +21,10 @@ This table compares denoising time across attention backends.
 
 | GPU | SDPA (min) | FlashAttention-3 (min) | SageAttention (min) | Peak CUDA allocated (GiB) | GPU memory (GiB) |
 | --- | ---: | ---: | ---: | ---: | ---: |
-| H200 | 9.17 | 7.84 | 7.86 | 43.34 | 140.40 |
-| H20-3E | 20.59 | 16.62 | 13.91 | 43.34 | 140.40 |
-| RTX 5880 Ada | 20.85 | — | 18.01 | 43.32 | 47.99 |
-| RTX A6000 | 22.93 | — | 22.75 | 43.32 | 47.99 |
+| H200 | 8.87 | 7.55 | 7.59 | 25.37 | 139.81 |
+| H20-3E | 19.55 | 15.63 | 12.89 | 25.37 | 139.81 |
+| RTX 5880 Ada | 20.28 | — | 17.51 | 24.21 | 47.37 |
+| RTX A6000 | 22.41 | — | 21.78 | 24.06 | 47.53 |
 
 > [!NOTE]
 > SageAttention results use the official `sageattn` entry point, which automatically dispatches an architecture-specific kernel for each GPU.

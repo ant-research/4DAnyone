@@ -2,9 +2,25 @@
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+import os
+from collections.abc import MutableMapping, Sequence
 
 from fdanyone.errors import ConfigurationError
+
+CUDA_ALLOCATOR_CONF = "PYTORCH_CUDA_ALLOC_CONF"
+CUDA_MAX_SPLIT_SIZE_MB = 4096
+
+
+def configure_inference_cuda_allocator(environment: MutableMapping[str, str] | None = None) -> None:
+    """Keep the DiT's reusable FFN allocation from being split into small blocks."""
+
+    environment = os.environ if environment is None else environment
+    current = environment.get(CUDA_ALLOCATOR_CONF, "").strip()
+    options = tuple(option.strip() for option in current.split(",") if option.strip())
+    if any(option.partition(":")[0] == "max_split_size_mb" for option in options):
+        return
+    required = f"max_split_size_mb:{CUDA_MAX_SPLIT_SIZE_MB}"
+    environment[CUDA_ALLOCATOR_CONF] = f"{current},{required}" if current else required
 
 
 def select_cuda_device(device: str) -> tuple[str, int]:

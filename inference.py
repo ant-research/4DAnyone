@@ -4,8 +4,7 @@ from __future__ import annotations
 
 import sys
 
-from fire import Fire
-
+from fdanyone.device import configure_inference_cuda_allocator
 from fdanyone.errors import FourDAnyoneError
 
 
@@ -59,6 +58,9 @@ def inference(
         seed: Random seed shared by proposal and target generation.
     """
 
+    # This must run before the first model/PyTorch import. It protects the
+    # reusable 5--6 GiB DiT FFN allocation from allocator fragmentation.
+    configure_inference_cuda_allocator()
     # Keep model imports out of module scope so ``--help`` stays lightweight.
     from fdanyone.pipeline import run_pipeline
 
@@ -83,10 +85,19 @@ def inference(
     )
 
 
-if __name__ == "__main__":
+def main() -> None:
+    """Bootstrap the CLI without importing Fire or PyTorch at module import."""
+
+    configure_inference_cuda_allocator()
+    from fire import Fire
+
     try:
         Fire(inference)
     except FourDAnyoneError as exc:
         message = " ".join(line.strip() for line in str(exc).splitlines())
         print(f"error: {message}", file=sys.stderr)
         raise SystemExit(1) from None
+
+
+if __name__ == "__main__":
+    main()

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 import platform
 import shutil
 import sys
@@ -11,6 +12,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from fdanyone.config import INFERENCE
+from fdanyone.device import CUDA_ALLOCATOR_CONF
 from fdanyone.errors import FourDAnyoneError
 from fdanyone.io import write_json
 
@@ -34,6 +36,7 @@ def _runtime_metadata(device: str) -> dict:
         "available": torch.cuda.is_available(),
         "torch_cuda": torch.version.cuda,
         "cudnn": torch.backends.cudnn.version(),
+        "allocator_config": os.environ.get(CUDA_ALLOCATOR_CONF),
     }
     if torch.cuda.is_available():
         torch_device = torch.device(device)
@@ -164,6 +167,7 @@ def export_result(
         "attention_backend": attention_backend,
         "inference_steps": INFERENCE.num_inference_steps,
         "elapsed_seconds": generated.elapsed_seconds,
+        "stage_peak_vram_bytes": generated.stage_peak_vram_bytes,
         "total_elapsed_seconds": total_elapsed,
         "peak_vram_allocated_bytes": generated.peak_vram_allocated_bytes,
         "peak_vram_reserved_bytes": generated.peak_vram_reserved_bytes,

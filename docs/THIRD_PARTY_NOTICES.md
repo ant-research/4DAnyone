@@ -51,10 +51,9 @@ The companion Hugging Face repository distributes eight modified 121-frame excer
 
 `UPSTREAM.md`, `UPSTREAM.patch`, and `VENDORED_FILES.txt` in that directory record the exact provenance, research patch, and retained file set.
 
-Two retained DiffSynth files carry code-level upstream attribution:
+One retained DiffSynth file carries additional code-level upstream attribution:
 
 - `models/wan_video_pose_encoder.py` derives its pose network from [Tencent/MimicMotion](https://github.com/Tencent/MimicMotion/tree/c053153a1d124abae8c08568925ae88debc63001), Copyright Tencent, under Apache-2.0.
-- `models/wan_video_camera_controller.py` contains camera-coordinate helpers from [hehao13/CameraCtrl](https://github.com/hehao13/CameraCtrl), under Apache-2.0. The exact retained bytes remain identified through the DiffSynth public-base revision above.
 
 ## Sapiens2-derived Goliath/MHR schema material
 
@@ -71,9 +70,9 @@ The retained schema material is conservatively treated as Sapiens2-derived and t
 
 ## Model and body assets
 
-The 4DAnyone checkpoint and sanitized MHR70 sparse regression tensors are first-party release artifacts licensed under Apache-2.0, published at the Hugging Face revision frozen in `fdanyone/assets.py`. The regressor file also embeds the exact keypoint-name order required to interpret those tensors. That schema material retains the Sapiens2 notice above and is not relicensed by the tensor license. Wan VAE/T5/tokenizer, GVHMR checkpoints, HMR2, ViTPose, detector weights, and SMPL-X body models remain third-party assets. The redistributable files are mirrored by the companion Hugging Face repository. Users obtain SMPL-X from its official site and remain responsible for every applicable license.
+The 4DAnyone checkpoint and sanitized MHR70 sparse regression tensors are first-party release artifacts licensed under Apache-2.0, published at the Hugging Face revision frozen in `fdanyone/assets.py`. The regressor file also embeds the exact keypoint-name order required to interpret those tensors. That schema material retains the Sapiens2 notice above and is not relicensed by the tensor license. The Wan VAE and UMT5-derived frozen prompt conditioning, GVHMR checkpoints, HMR2, ViTPose, detector weights, and SMPL-X body models remain third-party assets. The redistributable files are mirrored by the companion Hugging Face repository. Users obtain SMPL-X from its official site and remain responsible for every applicable license.
 
-The frozen base-model assets come from the official [Wan2.2-TI2V-5B](https://huggingface.co/Wan-AI/Wan2.2-TI2V-5B) repository at revision `37685f96025fc1425edccdd4b2bca3836ae917ff` and the official [Wan2.1-T2V-1.3B](https://huggingface.co/Wan-AI/Wan2.1-T2V-1.3B) repository at revision `3f40b6dc4ca5c02dd23c9db74d9d2ccb82903b86`. Their official model cards license those model assets under Apache-2.0. The redistributed copies are pinned by the frozen Hugging Face revision.
+The frozen base-model assets come from the official [Wan2.2-TI2V-5B](https://huggingface.co/Wan-AI/Wan2.2-TI2V-5B) repository at revision `37685f96025fc1425edccdd4b2bca3836ae917ff` and the official [Wan2.1-T2V-1.3B](https://huggingface.co/Wan-AI/Wan2.1-T2V-1.3B) repository at revision `3f40b6dc4ca5c02dd23c9db74d9d2ccb82903b86`. The latter is used offline to produce the fixed prompt-conditioning tensor; its T5 weights and tokenizer are not part of reader downloads. Their official model cards license those model assets under Apache-2.0. The redistributed copies are pinned by the frozen Hugging Face revision.
 
 The MHR70 asset is a sanitized inference artifact containing only the sparse support/weight tensors, keypoint names, and a path-free structural schema. The first-party regression tensors are redistributed under Apache-2.0. The embedded name/order metadata remains covered by the schema notice above.
 

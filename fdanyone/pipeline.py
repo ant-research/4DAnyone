@@ -20,7 +20,7 @@ from fdanyone.assets import (
     resolve_regressor,
 )
 from fdanyone.config import INFERENCE
-from fdanyone.device import select_cuda_devices
+from fdanyone.device import CUDA_ALLOCATOR_CONF, select_cuda_devices
 from fdanyone.download import ensure_example_video, ensure_models, ensure_smplx
 from fdanyone.errors import ConfigurationError
 from fdanyone.io import AtomicResultDirectory, remove_tree, write_json
@@ -81,6 +81,9 @@ def _worker_environment() -> dict[str, str]:
         }
     )
     environment.pop("PYTHONHOME", None)
+    # The 4 GiB split policy is specific to the long-lived DiT process. These
+    # short-lived preprocessing workers use unrelated allocation shapes.
+    environment.pop(CUDA_ALLOCATOR_CONF, None)
     environment["PYTHONPATH"] = str(Path(__file__).resolve().parent.parent)
     return environment
 

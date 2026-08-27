@@ -2,21 +2,36 @@
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
 
-def denoise_group(pipe, latents, source, context, skeletons, step_index: int):
+if TYPE_CHECKING:
+    from torch import Tensor
+
+    from fdanyone.model.loader import Denoiser
+
+
+def denoise_group(
+    denoiser: Denoiser,
+    latents: Tensor,
+    source: Tensor,
+    context: Tensor,
+    pose_features: Tensor,
+    null_pose_feature: Tensor,
+    step_index: int,
+) -> Tensor:
     """Advance one camera group by one scheduler step."""
 
     import torch
 
-    timestep = pipe.scheduler.timesteps[step_index]
-    batched_timestep = timestep.unsqueeze(0).to(dtype=pipe.torch_dtype, device=latents.device)
+    timestep = denoiser.scheduler.timesteps[step_index]
+    batched_timestep = timestep.unsqueeze(0).to(dtype=denoiser.dtype, device=latents.device)
     batched_timestep = torch.cat([batched_timestep] * latents.shape[0], dim=0)
-    prediction = pipe.dit(
+    prediction = denoiser.model(
         x=latents,
         x_src=source,
         timestep=batched_timestep,
-        skeletons=skeletons,
+        pose_features=pose_features,
+        null_pose_feature=null_pose_feature,
         context=context,
-        **pipe.prepare_extra_input(latents),
     )
-    return pipe.scheduler.step(prediction, timestep, latents)
+    return denoiser.scheduler.step(prediction, timestep, latents)
