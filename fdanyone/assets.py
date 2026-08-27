@@ -13,7 +13,7 @@ from pathlib import Path
 from fdanyone.errors import AssetError
 
 HF_REPO_ID = "AntResearch/4DAnyone"
-HF_REVISION = "71df7ca27e47314f1ae1d795adbb26c7e1f522b1"
+HF_REVISION = "ba4888adf7f1359b0d5133532df308cb58287351"
 
 BIREFNET_REPO_ID = "ZhengPeng7/BiRefNet"
 BIREFNET_REVISION = "e2bf8e4460fc8fa32bba5ea4d94b3233d367b0e4"
