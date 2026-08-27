@@ -13,7 +13,7 @@ from pathlib import Path
 from fdanyone.errors import AssetError
 
 HF_REPO_ID = "AntResearch/4DAnyone"
-HF_REVISION = "ba4888adf7f1359b0d5133532df308cb58287351"
+HF_REVISION = "442816913e7cc75be2ede1a5c93a86d936d032f1"
 
 BIREFNET_REPO_ID = "ZhengPeng7/BiRefNet"
 BIREFNET_REVISION = "e2bf8e4460fc8fa32bba5ea4d94b3233d367b0e4"
@@ -52,13 +52,25 @@ MODEL_FILES = (
 
 EXAMPLE_FILES = (
     "data/source/pexels/10331522-uhd_2160_4096_25fps.mp4",
+    "data/source/pexels/15443888_1080_1920_100fps.mp4",
     "data/source/pexels/2785536-uhd_2160_3840_25fps.mp4",
+    "data/source/pexels/5385965-uhd_2160_4096_25fps.mp4",
+    "data/source/pexels/5390224-uhd_2160_4096_30fps.mp4",
+    "data/source/pexels/5390836-uhd_2160_4096_30fps.mp4",
     "data/source/pexels/5435720-uhd_2160_4096_25fps.mp4",
     "data/source/pexels/5885633-hd_1080_1920_25fps.mp4",
     "data/source/pexels/5999210-uhd_2160_4096_25fps.mp4",
+    "data/source/pexels/6003989-uhd_2160_3840_30fps.mp4",
+    "data/source/pexels/6191453-uhd_2160_4096_25fps.mp4",
+    "data/source/pexels/6616344-hd_1080_1920_25fps.mp4",
     "data/source/pexels/6980035-uhd_2160_4096_30fps.mp4",
+    "data/source/pexels/7017803-hd_1080_1920_30fps.mp4",
     "data/source/pexels/7080903-hd_1080_1920_30fps.mp4",
+    "data/source/pexels/7341232-uhd_2160_3840_25fps.mp4",
     "data/source/pexels/7480858-uhd_2160_3840_25fps.mp4",
+    "data/source/pexels/7716891-uhd_2160_4096_25fps.mp4",
+    "data/source/pexels/8059623-hd_1080_1920_25fps.mp4",
+    "data/source/pexels/8431510-uhd_2160_4096_25fps.mp4",
 )
 
 # Upstream GVHMR resolves its model files relative to its own checkout, so the
