@@ -37,7 +37,7 @@ python scripts/download_example.py
 
 4DAnyone supports flexible target-view counts, pitch layers, and yaw coverage. Here are several common camera configurations:
 
-### 6-view full orbit
+### 6-View Full Orbit
 
 A compact 360° layout for basic coverage. Start here for an initial test.
 
@@ -49,7 +49,7 @@ python inference.py \
 
 <p align="left"><img src="docs/assets/inference-6-views.jpg" width="600" alt="Six evenly spaced target cameras on one full orbit"></p>
 
-### 24-view full orbit
+### 24-View Full Orbit
 
 A dense 360° layout with broad angular coverage, suitable for 4DGS reconstruction.
 
@@ -61,7 +61,7 @@ python inference.py \
 
 <p align="left"><img src="docs/assets/inference-24-views.jpg" width="600" alt="Twenty-four evenly spaced target cameras on one full orbit"></p>
 
-### 48-view, three pitch layers
+### 48-View Full Orbit, Three Pitch Layers
 
 This layout distributes views across three pitch rings for broader coverage, enabling free-viewpoint 4DGS rendering.
 
@@ -73,21 +73,21 @@ python inference.py \
 
 <p align="left"><img src="docs/assets/inference-48-views-3-layers.jpg" width="600" alt="Forty-eight target cameras arranged over three pitch layers"></p>
 
-### 8-view frontal arc
+### 24-View Frontal Arc, Two Pitch Layers
 
-A focused layout for applications that only require front-side viewpoints.
+A two-layer layout for dense coverage across the frontal 180° arc.
 
 ```bash
 python inference.py \
     --video_path "data/source/pexels/2785536-uhd_2160_3840_25fps.mp4" \
-    --views_per_layer 8 --start_yaw -90 --yaw_span 180
+    --views_per_layer 12 --layer_pitches '[0,30]' --start_yaw -90 --yaw_span 180
 ```
 
-<p align="left"><img src="docs/assets/inference-8-views-front-180.jpg" width="600" alt="Eight target cameras distributed over the frontal 180-degree arc"></p>
+<p align="left"><img src="docs/assets/inference-24-views-front-180.jpg" width="600" alt="Twenty-four target cameras distributed over two pitch layers along the frontal 180-degree arc"></p>
 
-### Arguments
+### Key Arguments
 
-Run `python inference.py --help` for the full list. Key arguments are:
+Run `python inference.py --help` for the full list.
 
 - `views_per_layer`: number of evenly spaced views per pitch layer. It must be divisible by 4 or 6.
 - `layer_pitches`: pitch angles in degrees, one per layer. Positive values place cameras above the subject. Total views are `views_per_layer × len(layer_pitches)`.
@@ -117,7 +117,7 @@ For faster inference on supported GPUs, optionally install [FlashAttention-3](ht
 
 See [Inference performance](docs/inference_performance.md) for measured 6-view runtimes and peak GPU memory usage on H20-3E, H200, RTX 5880 Ada, and RTX A6000 GPUs.
 
-### Custom data
+### Custom Data
 
 Use an input video that:
 
