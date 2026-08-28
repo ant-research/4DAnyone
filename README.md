@@ -10,7 +10,8 @@
 
 ## News
 
-- **2026-08-28**: Significantly reduced GPU memory usage while slightly improving speed. See [Inference performance](docs/inference_performance.md) for details.
+- **2026-08-28**: Achieved a **1.42×** end-to-end speedup for the complete 24-view generation pipeline.
+- **2026-08-28**: Reduced peak GPU memory to **25.4 GiB** while slightly improving speed. See [Inference performance](docs/inference_performance.md) for details.
 
 ## Installation
 
@@ -92,7 +93,7 @@ Run `python inference.py --help` for the full list. Key arguments are:
 - `layer_pitches`: pitch angles in degrees, one per layer. Positive values place cameras above the subject. Total views are `views_per_layer × len(layer_pitches)`.
 - `start_yaw`: horizontal angle of the first view, in degrees. Yaw `0` is the front view.
 - `yaw_span`: horizontal range covered by each camera layer, in degrees.
-- `gpu_ids`: GPU IDs to use for parallel denoising. Defaults to all visible GPUs.
+- `gpu_ids`: GPU IDs used for parallel pose/VAE view stages and target denoising. Defaults to all visible GPUs.
 
 ### Output
 
@@ -112,7 +113,7 @@ data/
 
 ### Inference Efficiency
 
-For faster inference on supported GPUs, optionally install [FlashAttention-3](https://github.com/Dao-AILab/flash-attention/tree/main/hopper) or [SageAttention](https://github.com/thu-ml/SageAttention). Our implementation automatically detects installed backends at runtime.
+For faster inference on supported GPUs, optionally install [FlashAttention-3](https://github.com/Dao-AILab/flash-attention/tree/main/hopper) or [SageAttention](https://github.com/thu-ml/SageAttention). Runtime selection follows one fixed order: FlashAttention-3, SageAttention, then PyTorch SDPA.
 
 See [Inference performance](docs/inference_performance.md) for measured 6-view runtimes and peak GPU memory usage on H20-3E, H200, RTX 5880 Ada, and RTX A6000 GPUs.
 
@@ -130,11 +131,22 @@ Use an input video that:
 
 See the [nerfstudio guide](docs/nerfstudio.md) for details.
 
-## Todos
+## Roadmap
 
-- [x] Reduce peak GPU memory usage below 32 GB
-- [ ] Accelerate inference, targeting a 5× speedup
-- [ ] Support 4DGS reconstruction with an open-source method
+### Peak Memory Optimization
+
+- [x] Reduce peak GPU memory below 32 GB through pose precomputation and memory-efficient operators.
+
+### Inference Acceleration
+
+- [x] Achieve up to 1.42× end-to-end speedup by parallelizing pose encoding and VAE processing across GPUs.
+- [ ] Integrate [Sol-Engine](https://nvlabs.github.io/Sana/Sol-Engine/) (expected 2× speedup).
+- [ ] Distill the model for few-step inference (expected 5× speedup).
+
+### Reconstruction
+
+- [x] Support 3DGS reconstruction with nerfstudio.
+- [ ] Support 4DGS reconstruction with an open-source method.
 
 ## Citation
 

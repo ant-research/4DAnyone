@@ -3,7 +3,6 @@ from einops import rearrange, repeat
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from tqdm import tqdm
 
 CACHE_T = 2
 
@@ -987,17 +986,19 @@ class VideoVAE_(nn.Module):
         t = x.shape[2]
         iter_ = 1 + (t - 1) // 4
 
+        chunks = []
         for i in range(iter_):
             self._enc_conv_idx = [0]
             if i == 0:
-                out = self.encoder(x[:, :, :1, :, :],
-                                   feat_cache=self._enc_feat_map,
-                                   feat_idx=self._enc_conv_idx)
+                chunk = self.encoder(x[:, :, :1, :, :],
+                                     feat_cache=self._enc_feat_map,
+                                     feat_idx=self._enc_conv_idx)
             else:
-                out_ = self.encoder(x[:, :, 1 + 4 * (i - 1):1 + 4 * i, :, :],
-                                    feat_cache=self._enc_feat_map,
-                                    feat_idx=self._enc_conv_idx)
-                out = torch.cat([out, out_], 2)
+                chunk = self.encoder(x[:, :, 1 + 4 * (i - 1):1 + 4 * i, :, :],
+                                     feat_cache=self._enc_feat_map,
+                                     feat_idx=self._enc_conv_idx)
+            chunks.append(chunk)
+        out = chunks[0] if len(chunks) == 1 else torch.cat(chunks, dim=2)
         mu, log_var = self.conv1(out).chunk(2, dim=1)
         if isinstance(scale[0], torch.Tensor):
             scale = [s.to(dtype=mu.dtype, device=mu.device) for s in scale]
@@ -1020,17 +1021,19 @@ class VideoVAE_(nn.Module):
             z = z / scale[1] + scale[0]
         iter_ = z.shape[2]
         x = self.conv2(z)
+        chunks = []
         for i in range(iter_):
             self._conv_idx = [0]
             if i == 0:
-                out = self.decoder(x[:, :, i:i + 1, :, :],
-                                   feat_cache=self._feat_map,
-                                   feat_idx=self._conv_idx)
+                chunk = self.decoder(x[:, :, i:i + 1, :, :],
+                                     feat_cache=self._feat_map,
+                                     feat_idx=self._conv_idx)
             else:
-                out_ = self.decoder(x[:, :, i:i + 1, :, :],
-                                    feat_cache=self._feat_map,
-                                    feat_idx=self._conv_idx)
-                out = torch.cat([out, out_], 2) # may add tensor offload
+                chunk = self.decoder(x[:, :, i:i + 1, :, :],
+                                     feat_cache=self._feat_map,
+                                     feat_idx=self._conv_idx)
+            chunks.append(chunk)
+        out = chunks[0] if len(chunks) == 1 else torch.cat(chunks, dim=2)
         return out
 
     def reparameterize(self, mu, log_var):
@@ -1203,48 +1206,20 @@ class WanVideoVAE(nn.Module):
         return values
 
 
-    def single_encode(self, video, device):
-        video = video.to(device)
-        x = self.model.encode(video, self.scale)
-        return x
+    def encode_view(self, video):
+        """Encode one device-resident ``[1,C,F,H,W]`` view."""
+
+        if video.ndim != 5 or video.shape[0] != 1:
+            raise ValueError(f"VAE encode expects one batched view, got {tuple(video.shape)}.")
+        return self.model.encode(video, self.scale)
 
 
-    def single_decode(self, hidden_state, device):
-        hidden_state = hidden_state.to(device)
-        video = self.model.decode(hidden_state, self.scale)
-        return video.clamp_(-1, 1)
+    def decode_view(self, hidden_state):
+        """Decode one device-resident ``[1,C,F,H,W]`` latent view."""
 
-
-    def encode(self, videos, device, tiled=False, tile_size=(34, 34), tile_stride=(18, 16)):
-        videos = [video.to("cpu") for video in videos]
-        hidden_states = []
-        for video in tqdm(videos, desc="VAE encoding", disable=not tiled):
-            video = video.unsqueeze(0)
-            if tiled:
-                tile_size = (tile_size[0] * self.upsampling_factor, tile_size[1] * self.upsampling_factor)
-                tile_stride = (tile_stride[0] * self.upsampling_factor, tile_stride[1] * self.upsampling_factor)
-                hidden_state = self.tiled_encode(video, device, tile_size, tile_stride)
-            else:
-                hidden_state = self.single_encode(video, device)
-            hidden_state = hidden_state.squeeze(0)
-            hidden_states.append(hidden_state)
-        hidden_states = torch.stack(hidden_states)
-        return hidden_states
-
-
-    def decode(self, hidden_states, device, tiled=False, tile_size=(34, 34), tile_stride=(18, 16)):
-        hidden_states = [hidden_state.to("cpu") for hidden_state in hidden_states]
-        videos = []
-        for hidden_state in tqdm(hidden_states, desc="VAE decoding", disable=not tiled):
-            hidden_state = hidden_state.unsqueeze(0)
-            if tiled:
-                video = self.tiled_decode(hidden_state, device, tile_size, tile_stride)
-            else:
-                video = self.single_decode(hidden_state, device)
-            video = video.squeeze(0)
-            videos.append(video)
-        videos = torch.stack(videos)
-        return videos
+        if hidden_state.ndim != 5 or hidden_state.shape[0] != 1:
+            raise ValueError(f"VAE decode expects one batched view, got {tuple(hidden_state.shape)}.")
+        return self.model.decode(hidden_state, self.scale).clamp_(-1, 1)
 
 
     @staticmethod
@@ -1300,17 +1275,19 @@ class VideoVAE38_(VideoVAE_):
         x = patchify(x, patch_size=2)
         t = x.shape[2]
         iter_ = 1 + (t - 1) // 4
+        chunks = []
         for i in range(iter_):
             self._enc_conv_idx = [0]
             if i == 0:
-                out = self.encoder(x[:, :, :1, :, :],
-                                   feat_cache=self._enc_feat_map,
-                                   feat_idx=self._enc_conv_idx)
+                chunk = self.encoder(x[:, :, :1, :, :],
+                                     feat_cache=self._enc_feat_map,
+                                     feat_idx=self._enc_conv_idx)
             else:
-                out_ = self.encoder(x[:, :, 1 + 4 * (i - 1):1 + 4 * i, :, :],
-                                    feat_cache=self._enc_feat_map,
-                                    feat_idx=self._enc_conv_idx)
-                out = torch.cat([out, out_], 2)
+                chunk = self.encoder(x[:, :, 1 + 4 * (i - 1):1 + 4 * i, :, :],
+                                     feat_cache=self._enc_feat_map,
+                                     feat_idx=self._enc_conv_idx)
+            chunks.append(chunk)
+        out = chunks[0] if len(chunks) == 1 else torch.cat(chunks, dim=2)
         mu, log_var = self.conv1(out).chunk(2, dim=1)
         if isinstance(scale[0], torch.Tensor):
             scale = [s.to(dtype=mu.dtype, device=mu.device) for s in scale]
@@ -1334,18 +1311,20 @@ class VideoVAE38_(VideoVAE_):
             z = z / scale[1] + scale[0]
         iter_ = z.shape[2]
         x = self.conv2(z)
+        chunks = []
         for i in range(iter_):
             self._conv_idx = [0]
             if i == 0:
-                out = self.decoder(x[:, :, i:i + 1, :, :],
-                                   feat_cache=self._feat_map,
-                                   feat_idx=self._conv_idx,
-                                   first_chunk=True)
+                chunk = self.decoder(x[:, :, i:i + 1, :, :],
+                                     feat_cache=self._feat_map,
+                                     feat_idx=self._conv_idx,
+                                     first_chunk=True)
             else:
-                out_ = self.decoder(x[:, :, i:i + 1, :, :],
-                                    feat_cache=self._feat_map,
-                                    feat_idx=self._conv_idx)
-                out = torch.cat([out, out_], 2)
+                chunk = self.decoder(x[:, :, i:i + 1, :, :],
+                                     feat_cache=self._feat_map,
+                                     feat_idx=self._conv_idx)
+            chunks.append(chunk)
+        out = chunks[0] if len(chunks) == 1 else torch.cat(chunks, dim=2)
         out = unpatchify(out, patch_size=2)
         self.clear_cache()
         return out

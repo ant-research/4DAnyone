@@ -4,8 +4,11 @@ from __future__ import annotations
 
 import gc
 import logging
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from copy import deepcopy
 from dataclasses import dataclass
 from pathlib import Path
+from threading import Event
 from typing import TYPE_CHECKING
 
 from fdanyone.config import INFERENCE
@@ -193,6 +196,45 @@ class PoseFeatureCache:
     target: PoseFeatureBank
 
 
+@dataclass(frozen=True)
+class _PoseEncodingJob:
+    """One complete fixed-shape PoseEncoder call."""
+
+    feature_indices: tuple[int, ...]
+    skeletons: tuple[SkeletonVideo, ...]
+    batch_size: int
+    packed_views: int
+    channels_last: bool
+    builder: _PoseFeatureBuilder
+
+
+@dataclass
+class _PoseFeatureBuilder:
+    """Gather independently computed batches into canonical camera order."""
+
+    features: Tensor
+    null_features: Tensor
+
+    @classmethod
+    def create(cls, num_features: int, packed_views: int) -> _PoseFeatureBuilder:
+        import torch
+
+        return cls(
+            features=torch.empty((num_features, *POSE_FEATURE_SHAPE), dtype=torch.bfloat16, device="cpu"),
+            null_features=torch.empty((packed_views, *POSE_FEATURE_SHAPE), dtype=torch.bfloat16, device="cpu"),
+        )
+
+    def store(self, job: _PoseEncodingJob, encoded: Tensor) -> None:
+        for batch_index, feature_index in enumerate(job.feature_indices):
+            self.features[feature_index].copy_(encoded[batch_index])
+        if job.feature_indices[0] == 0:
+            null_start = len(job.feature_indices)
+            self.null_features.copy_(encoded[null_start : null_start + job.packed_views])
+
+    def build(self) -> PoseFeatureBank:
+        return PoseFeatureBank(features=self.features, null_features=self.null_features)
+
+
 def _encode_pose_batch(pose_encoder, videos):
     """Encode one bounded batch and return its CPU-resident BF16 features."""
 
@@ -208,85 +250,86 @@ def _encode_pose_batch(pose_encoder, videos):
     return encoded.detach().to(device="cpu").contiguous()
 
 
-def _encode_pose_feature_set(
+def _pose_jobs(
     *,
-    pose_encoder,
-    conditioning: Conditioning,
     skeletons: tuple[SkeletonVideo, ...],
     group_size: int,
     packed_views: int,
-    device: str,
     channels_last: bool,
-) -> PoseFeatureBank:
-    """Encode poses in fixed-shape batches capped below the denoising group."""
-
-    import torch
+) -> tuple[tuple[_PoseEncodingJob, ...], _PoseFeatureBuilder]:
+    """Plan complete fixed-shape calls and their canonical output owner."""
 
     plan = plan_pose_encoding(
         num_features=len(skeletons),
         group_size=group_size,
         packed_views=packed_views,
     )
-    features = torch.empty(
-        (len(skeletons), *POSE_FEATURE_SHAPE),
-        dtype=torch.bfloat16,
-        device="cpu",
+    builder = _PoseFeatureBuilder.create(len(skeletons), packed_views)
+    jobs = tuple(
+        _PoseEncodingJob(
+            feature_indices=indices,
+            skeletons=tuple(skeletons[index] for index in indices),
+            batch_size=plan.batch_size,
+            packed_views=packed_views,
+            channels_last=channels_last,
+            builder=builder,
+        )
+        for indices in plan.feature_groups
     )
-    null_features = torch.empty(
-        (packed_views, *POSE_FEATURE_SHAPE),
-        dtype=torch.bfloat16,
-        device="cpu",
-    )
+    return jobs, builder
+
+
+def _execute_pose_job(
+    *,
+    job: _PoseEncodingJob,
+    pose_encoder,
+    conditioning: Conditioning,
+    device: str,
+) -> None:
+    """Decode, encode, and gather one bounded pose batch."""
+
+    import torch
+
     video_shape = None
-    memory_format = torch.channels_last_3d if channels_last else torch.contiguous_format
-    for group_index, feature_indices in enumerate(plan.feature_groups):
-        batch = None
-        for batch_index, feature_index in enumerate(feature_indices):
-            skeleton = skeletons[feature_index]
-            LOGGER.info("Loading skeleton conditioning from %s", skeleton.path.name)
-            decoded = conditioning.load_skeleton_tensor([skeleton]).to(dtype=torch.bfloat16, device="cpu").contiguous()
-            if decoded.ndim != 5 or decoded.shape[0] != 1:
-                raise FourDAnyoneError(f"Expected one 5D skeleton tensor, got shape {tuple(decoded.shape)}.")
-            current_shape = tuple(decoded.shape[1:])
-            if video_shape is None:
-                video_shape = current_shape
-            elif current_shape != video_shape:
-                raise FourDAnyoneError(
-                    f"Skeleton {skeleton.path} has shape {tuple(decoded.shape)}, expected {(1, *video_shape)}."
-                )
-            if batch is None:
-                batch = torch.empty(
-                    (plan.batch_size, *video_shape),
-                    dtype=torch.bfloat16,
-                    device=device,
-                    memory_format=memory_format,
-                ).fill_(-1)
-            batch[batch_index].copy_(decoded[0])
-            del decoded
+    batch = None
+    memory_format = torch.channels_last_3d if job.channels_last else torch.contiguous_format
+    for batch_index, skeleton in enumerate(job.skeletons):
+        LOGGER.info("Loading skeleton conditioning from %s", skeleton.path.name)
+        decoded = conditioning.load_skeleton_tensor([skeleton]).to(dtype=torch.bfloat16, device="cpu").contiguous()
+        if decoded.ndim != 5 or decoded.shape[0] != 1:
+            raise FourDAnyoneError(f"Expected one 5D skeleton tensor, got shape {tuple(decoded.shape)}.")
+        current_shape = tuple(decoded.shape[1:])
+        if video_shape is None:
+            video_shape = current_shape
+            batch = torch.empty(
+                (job.batch_size, *video_shape),
+                dtype=torch.bfloat16,
+                device=device,
+                memory_format=memory_format,
+            ).fill_(-1)
+        elif current_shape != video_shape:
+            raise FourDAnyoneError(
+                f"Skeleton {skeleton.path} has shape {tuple(decoded.shape)}, expected {(1, *video_shape)}."
+            )
+        batch[batch_index].copy_(decoded[0])
+        del decoded
 
-        encoded = _encode_pose_batch(pose_encoder, batch)
-        for batch_index, feature_index in enumerate(feature_indices):
-            features[feature_index].copy_(encoded[batch_index])
-        if group_index == 0:
-            null_start = len(feature_indices)
-            null_features.copy_(encoded[null_start : null_start + packed_views])
-        del batch, encoded
-
-    return PoseFeatureBank(features=features, null_features=null_features)
+    encoded = _encode_pose_batch(pose_encoder, batch)
+    job.builder.store(job, encoded)
+    del batch, encoded
 
 
 def build_pose_feature_cache(
     *,
     conditioning: Conditioning,
     checkpoint_path: str | Path,
-    device: str,
+    devices: tuple[str, ...],
 ) -> PoseFeatureCache:
-    """Encode every skeleton once before the full DiT is loaded.
+    """Encode all fixed-shape pose jobs on an ordered CUDA device pool.
 
-    PoseEncoder has no cross-view operations.  Inputs are therefore split into
-    fixed-shape batches of at most six videos, keeping the full-resolution peak
-    bounded while preserving a stable CUDA convolution path.  Only compact
-    output features are retained.
+    One worker owns one PoseEncoder and one full-resolution batch at a time.
+    This bounds host/device memory while independent jobs execute concurrently;
+    builders restore canonical camera order regardless of completion order.
     """
 
     import torch
@@ -296,32 +339,68 @@ def build_pose_feature_cache(
     view_plan = conditioning.view_plan
     if not conditioning.target_skeletons:
         raise FourDAnyoneError("Pose conditioning requires at least one skeleton video.")
+    if not devices:
+        raise FourDAnyoneError("Pose conditioning requires at least one CUDA device.")
 
-    pose_encoder = load_pose_encoder(checkpoint_path, device)
-    try:
-        rcp = None
-        if view_plan.enable_rcp:
-            rcp = _encode_pose_feature_set(
-                pose_encoder=pose_encoder,
-                conditioning=conditioning,
-                skeletons=conditioning.rcp_skeletons,
-                group_size=view_plan.views_per_group,
-                packed_views=1,
-                device=device,
-                channels_last=True,
-            )
-        target = _encode_pose_feature_set(
-            pose_encoder=pose_encoder,
-            conditioning=conditioning,
-            skeletons=conditioning.target_skeletons,
+    rcp_jobs: tuple[_PoseEncodingJob, ...] = ()
+    rcp_builder = None
+    if view_plan.enable_rcp:
+        rcp_jobs, rcp_builder = _pose_jobs(
+            skeletons=conditioning.rcp_skeletons,
             group_size=view_plan.views_per_group,
-            packed_views=2 if view_plan.enable_rcp else 1,
-            device=device,
-            channels_last=False,
+            packed_views=1,
+            channels_last=True,
         )
-    finally:
-        del pose_encoder
-        gc.collect()
-        torch.cuda.empty_cache()
+    target_jobs, target_builder = _pose_jobs(
+        skeletons=conditioning.target_skeletons,
+        group_size=view_plan.views_per_group,
+        packed_views=2 if view_plan.enable_rcp else 1,
+        channels_last=False,
+    )
+    jobs = (*rcp_jobs, *target_jobs)
+    worker_count = min(len(jobs), len(devices))
+    stopped = Event()
+    prototype = load_pose_encoder(checkpoint_path, "cpu")
+    pose_encoders = [prototype]
+    pose_encoders.extend(deepcopy(prototype) for _ in range(worker_count - 1))
 
-    return PoseFeatureCache(rcp=rcp, target=target)
+    def run(worker_index: int) -> None:
+        device = devices[worker_index]
+        device_index = int(device.removeprefix("cuda:"))
+        torch.cuda.set_device(device_index)
+        pose_encoder = pose_encoders[worker_index]
+        try:
+            pose_encoder.to(device)
+            for job in jobs[worker_index::worker_count]:
+                if stopped.is_set():
+                    return
+                _execute_pose_job(
+                    job=job,
+                    pose_encoder=pose_encoder,
+                    conditioning=conditioning,
+                    device=device,
+                )
+        except BaseException:
+            stopped.set()
+            raise
+        finally:
+            pose_encoder.to("cpu")
+            torch.cuda.empty_cache()
+
+    with ThreadPoolExecutor(max_workers=worker_count, thread_name_prefix="pose") as pool:
+        futures = [pool.submit(run, worker_index) for worker_index in range(worker_count)]
+        try:
+            for future in as_completed(futures):
+                future.result()
+        except BaseException:
+            stopped.set()
+            for future in futures:
+                future.cancel()
+            raise
+
+    pose_encoders.clear()
+    gc.collect()
+    return PoseFeatureCache(
+        rcp=None if rcp_builder is None else rcp_builder.build(),
+        target=target_builder.build(),
+    )

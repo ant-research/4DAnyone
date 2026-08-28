@@ -24,13 +24,6 @@ except (ImportError, OSError, RuntimeError):
     FLASH_ATTN_3_AVAILABLE = False
 
 try:
-    import flash_attn
-
-    FLASH_ATTN_2_AVAILABLE = True
-except (ImportError, OSError, RuntimeError):
-    FLASH_ATTN_2_AVAILABLE = False
-
-try:
     from sageattention import sageattn
 
     SAGE_ATTN_AVAILABLE = True
@@ -52,24 +45,25 @@ NORM_EPSILON = 1e-6
 # gives the same one-view production chunk as the original 768 MiB
 # single-allocation limit, while naming the actual temporary budget.
 ROPE_TEMPORARY_BUDGET_BYTES = 1536 * 1024**2
+ATTENTION_BACKEND_PRIORITY = ("flash_attn_3", "sageattention", "sdpa")
 
 
 def get_attention_backend() -> str:
     """Return the implementation selected by the release auto policy."""
 
-    if FLASH_ATTN_3_AVAILABLE:
-        return "flash_attn_3"
-    if FLASH_ATTN_2_AVAILABLE:
-        return "flash_attn_2"
-    if SAGE_ATTN_AVAILABLE:
-        return "sageattention"
-    return "sdpa"
+    availability = {
+        "flash_attn_3": FLASH_ATTN_3_AVAILABLE,
+        "sageattention": SAGE_ATTN_AVAILABLE,
+        "sdpa": True,
+    }
+    return next(backend for backend in ATTENTION_BACKEND_PRIORITY if availability[backend])
 
 
-def flash_attention(q: torch.Tensor, k: torch.Tensor, v: torch.Tensor, num_heads: int) -> torch.Tensor:
-    """Evaluate attention with the fastest installed release backend."""
+def attention(q: torch.Tensor, k: torch.Tensor, v: torch.Tensor, num_heads: int) -> torch.Tensor:
+    """Evaluate attention with the backend selected by the release policy."""
 
-    if FLASH_ATTN_3_AVAILABLE:
+    backend = get_attention_backend()
+    if backend == "flash_attn_3":
         q = rearrange(q, "b s (n d) -> b s n d", n=num_heads)
         k = rearrange(k, "b s (n d) -> b s n d", n=num_heads)
         v = rearrange(v, "b s (n d) -> b s n d", n=num_heads)
@@ -77,17 +71,10 @@ def flash_attention(q: torch.Tensor, k: torch.Tensor, v: torch.Tensor, num_heads
         if isinstance(output, tuple):
             output = output[0]
         return rearrange(output, "b s n d -> b s (n d)", n=num_heads)
-    if FLASH_ATTN_2_AVAILABLE:
-        q = rearrange(q, "b s (n d) -> b s n d", n=num_heads)
-        k = rearrange(k, "b s (n d) -> b s n d", n=num_heads)
-        v = rearrange(v, "b s (n d) -> b s n d", n=num_heads)
-        output = flash_attn.flash_attn_func(q, k, v)
-        return rearrange(output, "b s n d -> b s (n d)", n=num_heads)
-
     q = rearrange(q, "b s (n d) -> b n s d", n=num_heads)
     k = rearrange(k, "b s (n d) -> b n s d", n=num_heads)
     v = rearrange(v, "b s (n d) -> b n s d", n=num_heads)
-    output = sageattn(q, k, v) if SAGE_ATTN_AVAILABLE else F.scaled_dot_product_attention(q, k, v)
+    output = sageattn(q, k, v) if backend == "sageattention" else F.scaled_dot_product_attention(q, k, v)
     return rearrange(output, "b n s d -> b s (n d)", n=num_heads)
 
 
@@ -195,7 +182,7 @@ class SelfAttention(nn.Module):
         v = self.v(x)
         q = rope_apply(q, freqs, self.num_heads)
         k = rope_apply(k, freqs, self.num_heads)
-        return self.o(flash_attention(q, k, v, self.num_heads))
+        return self.o(attention(q, k, v, self.num_heads))
 
 
 class CrossAttention(nn.Module):
@@ -213,7 +200,7 @@ class CrossAttention(nn.Module):
         q = self.norm_q(self.q(x))
         k = self.norm_k(self.k(context))
         v = self.v(context)
-        return self.o(flash_attention(q, k, v, self.num_heads))
+        return self.o(attention(q, k, v, self.num_heads))
 
 
 class DiTBlock(nn.Module):

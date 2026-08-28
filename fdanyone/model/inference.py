@@ -10,15 +10,12 @@ from __future__ import annotations
 import gc
 import logging
 import math
-from collections.abc import Iterable, Iterator
+from collections.abc import Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from typing import TYPE_CHECKING, TypedDict
-
-import numpy as np
-from PIL import Image
 
 from fdanyone.assets import BaseAssets
 from fdanyone.config import INFERENCE
@@ -26,17 +23,16 @@ from fdanyone.errors import FourDAnyoneError
 from fdanyone.model.conditioning import PoseFeatureBank, PoseFeatureCache, build_pose_feature_cache, load_prompt_context
 from fdanyone.model.denoise import denoise_group
 from fdanyone.model.distributed import Routes, WorkerReport, denoise_targets_distributed, select_worker_devices
-from fdanyone.model.loader import Denoiser, load_denoiser, load_vae
+from fdanyone.model.loader import Denoiser, load_denoiser
 from fdanyone.model.metrics import GenerationMetrics
 from fdanyone.model.routing import routing_steps
+from fdanyone.model.vae import VaeExecutor, load_reference_videos
 from fdanyone.skeleton.pipeline import Conditioning
-from fdanyone.video import CanonicalClip, write_video
+from fdanyone.video import CanonicalClip
 from fdanyone.views import ViewPlan
 
 if TYPE_CHECKING:
     from torch import Tensor, nn
-
-    from fdanyone.vendor.diffsynth.models.wan_video_vae import WanVideoVAE38
 
 LOGGER = logging.getLogger("fdanyone")
 
@@ -71,13 +67,18 @@ class GeneratedViews:
 @dataclass(frozen=True)
 class _GenerationPlan:
     view_plan: ViewPlan
-    device: str
-    device_index: int
-    worker_devices: tuple[str, ...]
+    candidate_devices: tuple[str, ...]
+    primary_device: str
+    primary_device_index: int
+    dit_devices: tuple[str, ...]
+
+    @property
+    def view_devices(self) -> tuple[str, ...]:
+        return self.candidate_devices
 
     @property
     def distributed(self) -> bool:
-        return len(self.worker_devices) > 1
+        return len(self.dit_devices) > 1
 
     @property
     def needs_primary_denoiser(self) -> bool:
@@ -105,14 +106,6 @@ def _model_on_device(model: nn.Module, device: str) -> Iterator[nn.Module]:
         _empty_cuda_cache()
 
 
-def _tiler_kwargs() -> dict[str, bool | tuple[int, int]]:
-    return {
-        "tiled": INFERENCE.tiled_vae,
-        "tile_size": INFERENCE.vae_tile_size,
-        "tile_stride": INFERENCE.vae_tile_stride,
-    }
-
-
 def _bf16_autocast():
     """Match Lightning's ``bf16-mixed`` inference context without Lightning."""
 
@@ -131,21 +124,12 @@ def _channels_last_source_layout(video):
     return video.contiguous(memory_format=torch.channels_last_3d)
 
 
-def _encode_videos(vae: WanVideoVAE38, videos: Tensor, device: str) -> Tensor:
-    import torch
-
-    videos = videos.to(dtype=torch.bfloat16, device=device)
-    with torch.inference_mode(), _bf16_autocast():
-        latents = vae.encode(videos, device=device, **_tiler_kwargs())
-    return latents.detach().to("cpu")
-
-
-def _noise(vae: WanVideoVAE38, num_views: int, num_frames: int, seed: int, device: str) -> Tensor:
+def _noise(vae: VaeExecutor, num_views: int, num_frames: int, seed: int, device: str) -> Tensor:
     import torch
 
     shape = (
         num_views,
-        vae.model.z_dim,
+        vae.latent_channels,
         (num_frames - 1) // 4 + 1,
         INFERENCE.height // vae.upsampling_factor,
         INFERENCE.width // vae.upsampling_factor,
@@ -158,7 +142,7 @@ def _noise(vae: WanVideoVAE38, num_views: int, num_frames: int, seed: int, devic
 
 def _denoise_rcp(
     denoiser: Denoiser,
-    vae: WanVideoVAE38,
+    vae: VaeExecutor,
     src_latents: Tensor,
     context: Tensor,
     camera_ids: tuple[int, ...],
@@ -195,93 +179,6 @@ def _denoise_rcp(
                 step_index,
             )
     return latents.detach().to("cpu")
-
-
-def _tensor_frames(video) -> Iterable[np.ndarray]:
-    """Match DiffSynth's float-to-uint8 truncation exactly."""
-
-    frames = video.detach().float().add_(1.0).mul_(127.5).clamp_(0.0, 255.0).to("cpu")
-    for frame_index in range(frames.shape[1]):
-        yield frames[:, frame_index].permute(1, 2, 0).numpy().astype(np.uint8)
-
-
-def _save_rcp_jpegs(video, camera_id: int, root: Path) -> Path:
-    import torchvision.transforms.functional as transform
-
-    frame_dir = root / f"{camera_id:06d}"
-    frame_dir.mkdir(parents=True, exist_ok=False)
-    normalized = video.detach().float().mul(0.5).add_(0.5).clamp_(0.0, 1.0).to("cpu")
-    for frame_index in range(normalized.shape[1]):
-        image = transform.to_pil_image(normalized[:, frame_index])
-        image.save(frame_dir / f"{frame_index:06d}.jpg", quality=INFERENCE.rcp_jpeg_quality)
-    return frame_dir
-
-
-def _rcp_reference_video_layout(frame_first_video):
-    """Match ``prepare_batch`` for JPEG-backed ``[V,F,C,H,W]`` data."""
-
-    if frame_first_video.ndim != 5:
-        raise FourDAnyoneError(f"Expected a 5D frame-first video tensor, got shape {tuple(frame_first_video.shape)}.")
-    return frame_first_video.permute(0, 2, 1, 3, 4)
-
-
-def _load_rcp_reference_videos(frame_dirs: Iterable[Path], num_frames: int):
-    """Decode RCP references exactly like the frozen JPEG-backed input path."""
-
-    import torch
-    import torchvision.transforms.functional as transform
-
-    videos = []
-    for frame_dir in frame_dirs:
-        frames = []
-        for frame_index in range(num_frames):
-            path = frame_dir / f"{frame_index:06d}.jpg"
-            with Image.open(path) as image:
-                frames.append(transform.to_tensor(image.convert("RGB")))
-        videos.append(torch.stack(frames, dim=0))
-    frame_first_video = torch.stack(videos, dim=0).mul_(2.0).sub_(1.0)
-    return _rcp_reference_video_layout(frame_first_video)
-
-
-def _decode_rcp(
-    vae: WanVideoVAE38,
-    latents: Tensor,
-    camera_ids: tuple[int, ...],
-    output_dir: Path,
-    clip: CanonicalClip,
-    device: str,
-) -> tuple[tuple[Path, ...], tuple[Path, ...]]:
-    import torch
-
-    if latents.shape[0] != len(camera_ids):
-        raise FourDAnyoneError(f"RCP decode expected {len(camera_ids)} latent views, got {latents.shape[0]}.")
-    frame_root = output_dir / "frames"
-    video_root = output_dir / "videos"
-    frame_root.mkdir(parents=True, exist_ok=False)
-    video_root.mkdir(parents=True, exist_ok=False)
-    frame_outputs: list[Path] = []
-    video_outputs: list[Path] = []
-    with torch.inference_mode(), _bf16_autocast():
-        for latent_index, camera_id in enumerate(camera_ids):
-            LOGGER.info("Decoding RCP camera %02d", camera_id)
-            video = vae.decode(
-                latents[latent_index : latent_index + 1].to(dtype=torch.bfloat16, device=device),
-                device=device,
-                **_tiler_kwargs(),
-            )[0]
-            frame_outputs.append(_save_rcp_jpegs(video, camera_id, frame_root))
-            video_outputs.append(
-                write_video(
-                    _tensor_frames(video),
-                    video_root / f"{camera_id:02d}.mp4",
-                    clip.fps,
-                    crf=INFERENCE.target_h264_crf,
-                    preset=INFERENCE.h264_preset,
-                )
-            )
-            del video
-            torch.cuda.empty_cache()
-    return tuple(frame_outputs), tuple(video_outputs)
 
 
 def _denoise_targets_single(
@@ -333,39 +230,6 @@ def _denoise_targets_single(
     return latents.detach().to("cpu")
 
 
-def _decode_targets(
-    vae: WanVideoVAE38,
-    latents: Tensor,
-    output_dir: Path,
-    clip: CanonicalClip,
-    device: str,
-) -> tuple[Path, ...]:
-    import torch
-
-    video_root = output_dir / "videos"
-    video_root.mkdir(parents=True, exist_ok=False)
-    outputs: list[Path] = []
-    with torch.inference_mode(), _bf16_autocast():
-        for camera_id in range(latents.shape[0]):
-            LOGGER.info("Decoding target camera %02d", camera_id)
-            video = vae.decode(
-                latents[camera_id : camera_id + 1].to(dtype=torch.bfloat16, device=device),
-                device=device,
-                **_tiler_kwargs(),
-            )[0]
-            path = write_video(
-                _tensor_frames(video),
-                video_root / f"{camera_id:02d}.mp4",
-                clip.fps,
-                crf=INFERENCE.target_h264_crf,
-                preset=INFERENCE.h264_preset,
-            )
-            outputs.append(path)
-            del video
-            torch.cuda.empty_cache()
-    return tuple(outputs)
-
-
 def _resolve_generation_plan(
     clip: CanonicalClip,
     conditioning: Conditioning,
@@ -387,29 +251,30 @@ def _resolve_generation_plan(
     if len(conditioning.rcp_skeletons) != len(view_plan.rcp_camera_ids):
         raise FourDAnyoneError("RCP skeleton count does not match the resolved view plan.")
 
-    device = devices[0]
-    device_index = int(device.removeprefix("cuda:"))
-    worker_devices = select_worker_devices(devices, view_plan.num_groups)
-    LOGGER.info("Using %s (%s)", device, torch.cuda.get_device_name(device_index))
-    if len(worker_devices) < len(devices):
+    primary_device = devices[0]
+    primary_device_index = int(primary_device.removeprefix("cuda:"))
+    dit_devices = select_worker_devices(devices, view_plan.num_groups)
+    LOGGER.info("Using %s (%s)", primary_device, torch.cuda.get_device_name(primary_device_index))
+    if len(dit_devices) < len(devices):
         LOGGER.info(
-            "Using %d of %d candidate GPUs for %d target groups",
-            len(worker_devices),
+            "Using %d of %d candidate GPUs for DiT and all %d for independent view stages",
+            len(dit_devices),
             len(devices),
-            view_plan.num_groups,
+            len(devices),
         )
     return _GenerationPlan(
         view_plan=view_plan,
-        device=device,
-        device_index=device_index,
-        worker_devices=worker_devices,
+        candidate_devices=devices,
+        primary_device=primary_device,
+        primary_device_index=primary_device_index,
+        dit_devices=dit_devices,
     )
 
 
 def _generate_rcp_and_references(
     *,
     denoiser: Denoiser,
-    vae: WanVideoVAE38,
+    vae: VaeExecutor,
     source_latents: Tensor,
     context: Tensor,
     pose_cache: PoseFeatureCache,
@@ -424,7 +289,7 @@ def _generate_rcp_and_references(
     rcp_pose_features = pose_cache.rcp
     if rcp_pose_features is None:
         raise FourDAnyoneError("RCP was enabled without precomputed proposal pose features.")
-    with metrics.stage("rcp_denoise"), _model_on_device(denoiser.model, plan.device):
+    with metrics.stage("rcp_denoise"), _model_on_device(denoiser.model, plan.primary_device):
         rcp_latents = _denoise_rcp(
             denoiser,
             vae,
@@ -432,27 +297,41 @@ def _generate_rcp_and_references(
             context,
             plan.view_plan.rcp_camera_ids,
             rcp_pose_features,
-            plan.device,
+            plan.primary_device,
             seed,
         )
 
-    with metrics.stage("rcp_decode_and_reference_encode"), _model_on_device(vae, plan.device):
+    with metrics.stage("rcp_decode_and_publish"):
         rcp_root = root / "rcp"
         rcp_root.mkdir()
-        frame_dirs, rcp_videos = _decode_rcp(
-            vae,
+        published = vae.publish_rcp(
             rcp_latents,
             plan.view_plan.rcp_camera_ids,
             rcp_root,
             clip,
-            plan.device,
         )
+    _merge_view_stage_peak(metrics, "rcp_decode_and_publish", vae)
+
+    with metrics.stage("rcp_reference_load"):
         # The released model consumes four JPEG-decoded proposal views. Keep
         # that numerical boundary even though the decoded tensors are local.
-        reference_videos = _load_rcp_reference_videos(frame_dirs[:4], INFERENCE.num_frames)
-        reference_latents = _encode_videos(vae, reference_videos, plan.device)
+        reference_videos = load_reference_videos(published.frame_directories[:4], INFERENCE.num_frames)
+
+    with metrics.stage("reference_encode"):
+        reference_latents = vae.encode(reference_videos)
         target_sources = torch.cat([source_latents, reference_latents], dim=0)
-    return target_sources, rcp_videos
+    _merge_view_stage_peak(metrics, "reference_encode", vae)
+    return target_sources, published.videos
+
+
+def _merge_view_stage_peak(metrics: GenerationMetrics, stage: str, vae: VaeExecutor) -> None:
+    if not vae.last_peak_vram_bytes:
+        return
+    metrics.merge_cuda_peak(
+        stage,
+        allocated_bytes=max(peak["allocated"] for peak in vae.last_peak_vram_bytes.values()),
+        reserved_bytes=max(peak["reserved"] for peak in vae.last_peak_vram_bytes.values()),
+    )
 
 
 def _target_routes(view_plan: ViewPlan) -> Routes:
@@ -516,7 +395,7 @@ def generate_views(
     plan = _resolve_generation_plan(clip, conditioning, devices, seed)
     root = Path(output_dir).expanduser().resolve()
     root.mkdir(parents=True, exist_ok=False)
-    metrics = GenerationMetrics(plan.device_index)
+    metrics = GenerationMetrics(plan.primary_device_index)
 
     with metrics.stage("prompt"):
         context = load_prompt_context(assets.prompt_context)
@@ -525,104 +404,115 @@ def generate_views(
         pose_cache = build_pose_feature_cache(
             conditioning=conditioning,
             checkpoint_path=checkpoint_path,
-            device=plan.device,
+            devices=plan.view_devices,
         )
 
     with metrics.stage("model_load"):
         denoiser = load_denoiser(checkpoint_path=checkpoint_path) if plan.needs_primary_denoiser else None
-        vae = load_vae(assets.vae)
+        vae = VaeExecutor.load(assets.vae, plan.view_devices)
 
-    with metrics.stage("source_encode"), _model_on_device(vae, plan.device):
-        source_video = _channels_last_source_layout(conditioning.load_source_tensor())
-        source_latents = _encode_videos(vae, source_video, plan.device)
-        del source_video
+    try:
+        with metrics.stage("source_encode"):
+            source_video = _channels_last_source_layout(conditioning.load_source_tensor())
+            source_latents = vae.encode(source_video)
+            del source_video
+        _merge_view_stage_peak(metrics, "source_encode", vae)
 
-    rcp_videos: tuple[Path, ...] = ()
-    target_sources = source_latents
-    if plan.view_plan.enable_rcp:
-        if denoiser is None:
-            raise RuntimeError("RCP requires a primary-process denoiser.")
-        target_sources, rcp_videos = _generate_rcp_and_references(
-            denoiser=denoiser,
-            vae=vae,
-            source_latents=source_latents,
-            context=context,
-            pose_cache=pose_cache,
-            plan=plan,
-            root=root,
-            clip=clip,
-            seed=seed,
-            metrics=metrics,
-        )
-
-    parallelism = None
-    with metrics.stage("target_denoise"):
-        routes = _target_routes(plan.view_plan)
-        initial_latents = _noise(
-            vae,
-            plan.view_plan.num_target_views,
-            INFERENCE.num_frames,
-            seed,
-            plan.device,
-        )
-        if plan.distributed:
-            if denoiser is not None:
-                del denoiser
-            initial_latents = initial_latents.to("cpu")
-            _empty_cuda_cache()
-            target_latents, parallelism = _denoise_targets_multi_gpu(
-                target_sources=target_sources,
-                context=context,
-                initial_latents=initial_latents,
-                pose_features=pose_cache.target,
-                routes=routes,
-                checkpoint_path=checkpoint_path,
-                root=root,
-                devices=plan.worker_devices,
-                candidate_devices=devices,
-                num_groups=plan.view_plan.num_groups,
-            )
-        else:
+        rcp_videos: tuple[Path, ...] = ()
+        target_sources = source_latents
+        if plan.view_plan.enable_rcp:
             if denoiser is None:
-                raise RuntimeError("Single-GPU target generation requires a primary-process denoiser.")
-            with _model_on_device(denoiser.model, plan.device):
-                target_latents = _denoise_targets_single(
-                    denoiser,
-                    target_sources,
-                    context,
-                    pose_cache.target,
-                    initial_latents,
-                    routes,
-                    plan.device,
+                raise RuntimeError("RCP requires a primary-process denoiser.")
+            target_sources, rcp_videos = _generate_rcp_and_references(
+                denoiser=denoiser,
+                vae=vae,
+                source_latents=source_latents,
+                context=context,
+                pose_cache=pose_cache,
+                plan=plan,
+                root=root,
+                clip=clip,
+                seed=seed,
+                metrics=metrics,
+            )
+        del source_latents
+        # Parallel VAE replicas are stage-local. Retaining only the prototype
+        # bounds parent host memory while distributed DiT workers load.
+        vae.release_replicas()
+        target_pose_features = pose_cache.target
+        del pose_cache
+
+        parallelism = None
+        with metrics.stage("target_denoise"):
+            routes = _target_routes(plan.view_plan)
+            initial_latents = _noise(
+                vae,
+                plan.view_plan.num_target_views,
+                INFERENCE.num_frames,
+                seed,
+                plan.primary_device,
+            )
+            if plan.distributed:
+                denoiser = None
+                initial_latents = initial_latents.to("cpu")
+                _empty_cuda_cache()
+                target_latents, parallelism = _denoise_targets_multi_gpu(
+                    target_sources=target_sources,
+                    context=context,
+                    initial_latents=initial_latents,
+                    pose_features=target_pose_features,
+                    routes=routes,
+                    checkpoint_path=checkpoint_path,
+                    root=root,
+                    devices=plan.dit_devices,
+                    candidate_devices=plan.candidate_devices,
+                    num_groups=plan.view_plan.num_groups,
                 )
-            del denoiser
-        del initial_latents
+            else:
+                if denoiser is None:
+                    raise RuntimeError("Single-GPU target generation requires a primary-process denoiser.")
+                with _model_on_device(denoiser.model, plan.primary_device):
+                    target_latents = _denoise_targets_single(
+                        denoiser,
+                        target_sources,
+                        context,
+                        target_pose_features,
+                        initial_latents,
+                        routes,
+                        plan.primary_device,
+                    )
+                denoiser = None
+            del initial_latents
 
-    if parallelism is not None:
-        workers = parallelism["workers"]
-        metrics.merge_cuda_peak(
-            "target_denoise",
-            allocated_bytes=max(int(worker["peak_vram_allocated_bytes"]) for worker in workers),
-            reserved_bytes=max(int(worker["peak_vram_reserved_bytes"]) for worker in workers),
+        if parallelism is not None:
+            workers = parallelism["workers"]
+            metrics.merge_cuda_peak(
+                "target_denoise",
+                allocated_bytes=max(int(worker["peak_vram_allocated_bytes"]) for worker in workers),
+                reserved_bytes=max(int(worker["peak_vram_reserved_bytes"]) for worker in workers),
+            )
+        del target_pose_features, target_sources, context
+
+        with metrics.stage("target_decode_and_publish"):
+            target_root = root / "target"
+            target_root.mkdir()
+            target_videos = vae.publish_targets(target_latents, target_root, clip)
+        _merge_view_stage_peak(metrics, "target_decode_and_publish", vae)
+
+        result = GeneratedViews(
+            rcp_videos=rcp_videos,
+            target_videos=target_videos,
+            view_plan=plan.view_plan,
+            seed=seed,
+            device=plan.primary_device,
+            elapsed_seconds=metrics.elapsed_seconds,
+            stage_peak_vram_bytes=metrics.stage_peak_vram_bytes,
+            peak_vram_allocated_bytes=metrics.peak_vram_allocated_bytes,
+            peak_vram_reserved_bytes=metrics.peak_vram_reserved_bytes,
+            parallelism=parallelism,
         )
+    finally:
+        vae.close()
+        _empty_cuda_cache()
 
-    with metrics.stage("target_decode"):
-        target_root = root / "target"
-        target_root.mkdir()
-        with _model_on_device(vae, plan.device):
-            target_videos = _decode_targets(vae, target_latents, target_root, clip, plan.device)
-
-    del target_latents, target_sources, source_latents, context, pose_cache, vae
-    _empty_cuda_cache()
-    return GeneratedViews(
-        rcp_videos=rcp_videos,
-        target_videos=target_videos,
-        view_plan=plan.view_plan,
-        seed=seed,
-        device=plan.device,
-        elapsed_seconds=metrics.elapsed_seconds,
-        stage_peak_vram_bytes=metrics.stage_peak_vram_bytes,
-        peak_vram_allocated_bytes=metrics.peak_vram_allocated_bytes,
-        peak_vram_reserved_bytes=metrics.peak_vram_reserved_bytes,
-        parallelism=parallelism,
-    )
+    return result
