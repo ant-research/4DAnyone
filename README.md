@@ -132,8 +132,8 @@ See the [nerfstudio guide](docs/nerfstudio.md) for details.
 
 ## Todos
 
-- [ ] Low-memory inference (<32 GB)
-- [ ] Faster inference with TensorRT and sparse attention
+- [x] Reduce peak GPU memory usage below 32 GB
+- [ ] Accelerate inference, targeting a 5× speedup
 - [ ] Support 4DGS reconstruction with an open-source method
 
 ## Citation
