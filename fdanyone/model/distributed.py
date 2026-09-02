@@ -25,6 +25,7 @@ from fdanyone.errors import FourDAnyoneError
 if TYPE_CHECKING:
     from torch import Tensor
 
+    from fdanyone.config import DenoisingProfile
     from fdanyone.model.conditioning import PoseFeatureBank
     from fdanyone.model.loader import Denoiser
 
@@ -51,11 +52,11 @@ class WorkerReport(TypedDict):
 @dataclass(frozen=True)
 class DistributedDenoiseRequest:
     checkpoint_path: str
-    work_dir: str
-    devices: tuple[str, ...]
+    turbo_lora_path: str | None
+    denoising_profile: DenoisingProfile
     routes: Routes
-    denoising_strength: float
-    scheduler_shift: float
+    devices: tuple[str, ...]
+    work_dir: str
     pose_feature_shape: tuple[int, ...]
     init_method: str
 
@@ -260,11 +261,6 @@ def _load_worker_state(rank: int, request: DistributedDenoiseRequest, denoiser: 
         size=math.prod(request.pose_feature_shape),
         dtype=torch.bfloat16,
     ).view(request.pose_feature_shape)
-    denoiser.scheduler.set_timesteps(
-        len(request.routes),
-        denoising_strength=request.denoising_strength,
-        shift=request.scheduler_shift,
-    )
     return _WorkerState(
         rank=rank,
         request=request,
@@ -321,8 +317,12 @@ def _worker(rank: int, request: DistributedDenoiseRequest) -> None:
     resolved_backend = get_attention_backend()
 
     model_started = time.monotonic()
-    denoiser = load_denoiser(checkpoint_path=request.checkpoint_path)
-    denoiser.model.to(device)
+    denoiser = load_denoiser(
+        checkpoint_path=request.checkpoint_path,
+        turbo_lora_path=request.turbo_lora_path,
+        profile=request.denoising_profile,
+    )
+    denoiser.prepare_on_device(device)
     torch.cuda.synchronize(device_index)
     model_load_seconds = time.monotonic() - model_started
 
@@ -360,16 +360,16 @@ def _worker(rank: int, request: DistributedDenoiseRequest) -> None:
 
 def denoise_targets_distributed(
     *,
+    checkpoint_path: str | Path,
+    turbo_lora_path: str | Path | None,
+    denoising_profile: DenoisingProfile,
+    routes: Routes,
     src_latents: Tensor,
     context: Tensor,
     initial_latents: Tensor,
     pose_features: PoseFeatureBank,
-    routes: Routes,
-    checkpoint_path: str | Path,
     work_dir: str | Path,
     devices: Sequence[str],
-    denoising_strength: float,
-    scheduler_shift: float,
 ) -> tuple[Tensor, list[WorkerReport]]:
     """Prepare shared inputs, launch NCCL workers, and return canonical latents."""
 
@@ -382,6 +382,11 @@ def denoise_targets_distributed(
     if not torch.distributed.is_available() or not torch.distributed.is_nccl_available():
         raise FourDAnyoneError("Multi-GPU inference requires a PyTorch build with NCCL support.")
     validate_routes(routes, int(initial_latents.shape[0]))
+    if len(routes) != denoising_profile.num_inference_steps:
+        raise ValueError(
+            f"Denoising profile {denoising_profile.name!r} requires "
+            f"{denoising_profile.num_inference_steps} routing steps, got {len(routes)}."
+        )
     num_groups = len(routes[0])
 
     root = _resolve_empty_workspace(work_dir)
@@ -400,11 +405,11 @@ def denoise_targets_distributed(
     )
     request = DistributedDenoiseRequest(
         checkpoint_path=str(Path(checkpoint_path).expanduser().resolve()),
-        work_dir=str(root),
-        devices=devices,
+        turbo_lora_path=(None if turbo_lora_path is None else str(Path(turbo_lora_path).expanduser().resolve())),
+        denoising_profile=denoising_profile,
         routes=routes,
-        denoising_strength=denoising_strength,
-        scheduler_shift=scheduler_shift,
+        devices=devices,
+        work_dir=str(root),
         pose_feature_shape=pose_feature_shape,
         init_method=f"tcp://127.0.0.1:{_free_local_port()}",
     )

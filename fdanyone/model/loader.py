@@ -2,10 +2,11 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from fdanyone.config import DenoisingProfile
 from fdanyone.errors import AssetError, ConfigurationError
 
 if TYPE_CHECKING:
@@ -17,13 +18,25 @@ if TYPE_CHECKING:
 POSE_ENCODER_PREFIX = "pose_encoder."
 
 
-@dataclass(frozen=True)
+@dataclass
 class Denoiser:
-    """The exact DiT, scheduler, and dtype used by one denoising process."""
+    """A loaded DiT, its configured scheduler, and optional Turbo fusion."""
 
     model: nn.Module
     scheduler: FlowMatchScheduler
     dtype: torch.dtype
+    turbo_lora_path: Path | None = None
+    turbo_lora_applied: bool = field(default=False, init=False)
+
+    def prepare_on_device(self, device: str | torch.device) -> None:
+        """Move the DiT to a device and apply its configured Turbo delta once."""
+
+        self.model.to(device=device, dtype=self.dtype)
+        if self.turbo_lora_path is not None and not self.turbo_lora_applied:
+            from fdanyone.model.turbo_lora import fuse_turbo_lora
+
+            fuse_turbo_lora(self.model, self.turbo_lora_path)
+            self.turbo_lora_applied = True
 
 
 def _load_checkpoint(
@@ -44,7 +57,10 @@ def _load_checkpoint(
             if (include_prefix is None or key.startswith(include_prefix))
             and not any(key.startswith(prefix) for prefix in exclude_prefixes)
         )
-        return {key: checkpoint.get_tensor(key) for key in keys}
+        return (
+            {key: checkpoint.get_tensor(key) for key in keys},
+            dict(checkpoint.metadata() or {}),
+        )
 
 
 def _strict_assign(module, state_dict: dict, label: str) -> None:
@@ -75,13 +91,13 @@ def _load_dit(checkpoint_path: Path):
 
     with torch.device("meta"):
         dit = FourDAnyoneDiT()
-    state_dict = _load_checkpoint(checkpoint_path, exclude_prefixes=(POSE_ENCODER_PREFIX,))
+    state_dict, metadata = _load_checkpoint(checkpoint_path, exclude_prefixes=(POSE_ENCODER_PREFIX,))
     _strict_assign(dit, state_dict, "4DAnyone DiT checkpoint")
     del state_dict
     # ``freqs`` is a derived, non-persistent tensor and therefore is not in the
     # state dict populated above.
     dit.freqs = precompute_freqs_cis_3d(MODEL_DIM // NUM_HEADS)
-    return dit.eval().requires_grad_(False)
+    return dit.eval().requires_grad_(False), metadata
 
 
 def load_pose_encoder(checkpoint_path: str | Path, device: str):
@@ -92,10 +108,9 @@ def load_pose_encoder(checkpoint_path: str | Path, device: str):
     from fdanyone.vendor.diffsynth.models.wan_video_dit import MODEL_DIM
     from fdanyone.vendor.diffsynth.models.wan_video_pose_encoder import PoseEncoder
 
-    state_dict = {
-        key.removeprefix(POSE_ENCODER_PREFIX): value
-        for key, value in _load_checkpoint(Path(checkpoint_path), include_prefix=POSE_ENCODER_PREFIX).items()
-    }
+    checkpoint, _ = _load_checkpoint(Path(checkpoint_path), include_prefix=POSE_ENCODER_PREFIX)
+    state_dict = {key.removeprefix(POSE_ENCODER_PREFIX): value for key, value in checkpoint.items()}
+    del checkpoint
     with torch.device("meta"):
         pose_encoder = PoseEncoder(out_dim=MODEL_DIM, in_channels=3)
     _strict_assign(pose_encoder, state_dict, "4DAnyone pose encoder checkpoint")
@@ -128,16 +143,40 @@ def load_vae(path: str | Path):
     return _load_vae(Path(path), torch.bfloat16)
 
 
-def load_denoiser(*, checkpoint_path: str | Path) -> Denoiser:
-    """Load the DiT and scheduler required by one distributed worker."""
+def load_denoiser(
+    *,
+    checkpoint_path: str | Path,
+    turbo_lora_path: str | Path | None,
+    profile: DenoisingProfile,
+) -> Denoiser:
+    """Load one DiT and configure its denoising trajectory."""
 
     import torch
 
     from fdanyone.vendor.diffsynth.schedulers.flow_match import FlowMatchScheduler
 
     dtype = torch.bfloat16
+    checkpoint = Path(checkpoint_path).expanduser().resolve()
+    if not checkpoint.is_file():
+        raise AssetError(f"4DAnyone checkpoint does not exist: {checkpoint}")
+    turbo_path = None if turbo_lora_path is None else Path(turbo_lora_path).expanduser().resolve()
+    if turbo_path is not None and not turbo_path.is_file():
+        raise AssetError(f"Turbo LoRA does not exist: {turbo_path}")
+    model, metadata = _load_dit(checkpoint)
+    if turbo_path is not None:
+        from fdanyone.model.turbo_lora import validate_turbo_base_metadata
+
+        validate_turbo_base_metadata(metadata)
+    # ``step`` only reads the trajectory, so RCP and target generation can
+    # safely share one scheduler configured when this denoiser is loaded.
+    scheduler = FlowMatchScheduler(shift=profile.scheduler_shift, sigma_min=0.0, extra_one_step=True)
+    scheduler.set_timesteps(
+        profile.num_inference_steps,
+        denoising_strength=profile.denoising_strength,
+    )
     return Denoiser(
-        model=_load_dit(Path(checkpoint_path)),
-        scheduler=FlowMatchScheduler(shift=5, sigma_min=0.0, extra_one_step=True),
+        model=model,
+        scheduler=scheduler,
         dtype=dtype,
+        turbo_lora_path=turbo_path,
     )

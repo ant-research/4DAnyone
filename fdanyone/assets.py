@@ -11,9 +11,10 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from fdanyone.errors import AssetError
+from fdanyone.io import sha256_file
 
 HF_REPO_ID = "AntResearch/4DAnyone"
-HF_REVISION = "442816913e7cc75be2ede1a5c93a86d936d032f1"
+HF_REVISION = "4c80e87b805a5f8461cf339cdbe2fb4249e585aa"
 
 BIREFNET_REPO_ID = "ZhengPeng7/BiRefNet"
 BIREFNET_REVISION = "e2bf8e4460fc8fa32bba5ea4d94b3233d367b0e4"
@@ -29,6 +30,11 @@ CHECKPOINT = "4danyone/model.safetensors"
 MHR70_REGRESSOR = "4danyone/smplx_to_goliath70.pt"
 WAN_VAE = "4danyone/Wan2.2_VAE.pth"
 PROMPT_CONTEXT = "4danyone/prompt_context.safetensors"
+
+TURBO_LORA = "4danyone/Wan22_TI2V_5B_Turbo_lora_rank_64_fp16.safetensors"
+TURBO_LORA_NAME = "wan22_ti2v_5b_turbo_lora"
+TURBO_LORA_SIZE_BYTES = 332_348_584
+TURBO_LORA_SHA256 = "0ace5244e3d1256f884662c261b017249796cf5b95f05d5ed93cc02a478967b8"
 
 GVHMR_CHECKPOINT = "gvhmr/gvhmr_siga24_release.ckpt"
 HMR2_CHECKPOINT = "gvhmr/epoch=10-step=25000.ckpt"
@@ -48,6 +54,7 @@ MODEL_FILES = (
     VITPOSE_CHECKPOINT,
     YOLO_CHECKPOINT,
     PERCEPTUAL_VGG19,
+    TURBO_LORA,
 )
 
 EXAMPLE_FILES = (
@@ -104,6 +111,19 @@ def resolve_checkpoint(path: str | Path | None = None, model_dir: str | Path = "
             raise AssetError(f"Checkpoint override does not exist: {resolved}")
         return resolved
     return _require_file(Path(model_dir) / CHECKPOINT, "Checkpoint", "scripts/download_model.py")
+
+
+def resolve_turbo_lora(model_dir: str | Path = "models") -> Path:
+    """Resolve and authenticate the exact Wan2.2 5B Turbo LoRA."""
+
+    resolved = _require_file(Path(model_dir) / TURBO_LORA, "Turbo LoRA", "scripts/download_model.py")
+    size = resolved.stat().st_size
+    if size != TURBO_LORA_SIZE_BYTES:
+        raise AssetError(f"Turbo LoRA size mismatch: {size} != {TURBO_LORA_SIZE_BYTES} bytes ({resolved})")
+    digest = sha256_file(resolved)
+    if digest != TURBO_LORA_SHA256:
+        raise AssetError(f"Turbo LoRA SHA-256 mismatch: {digest} != {TURBO_LORA_SHA256} ({resolved})")
+    return resolved
 
 
 def resolve_regressor(path: str | Path | None = None, model_dir: str | Path = "models") -> Path:

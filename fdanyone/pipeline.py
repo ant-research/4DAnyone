@@ -14,12 +14,16 @@ from fdanyone.assets import (
     CHECKPOINT,
     HF_REPO_ID,
     HF_REVISION,
+    TURBO_LORA,
+    TURBO_LORA_NAME,
+    TURBO_LORA_SHA256,
     resolve_base_assets,
     resolve_checkpoint,
     resolve_foreground_model,
     resolve_regressor,
+    resolve_turbo_lora,
 )
-from fdanyone.config import INFERENCE
+from fdanyone.config import BASE24, INFERENCE, RANK64_DELTA4
 from fdanyone.device import CUDA_ALLOCATOR_CONF, select_cuda_devices
 from fdanyone.download import ensure_example_video, ensure_models, ensure_smplx
 from fdanyone.errors import ConfigurationError
@@ -174,6 +178,7 @@ def run_pipeline(
     data_dir: str,
     model_dir: str,
     checkpoint_path: str | None,
+    enable_turbo: bool,
     mhr70_regressor_path: str | None,
     gvhmr_root: str,
     gpu_ids: list[int] | None,
@@ -194,6 +199,9 @@ def run_pipeline(
     logging.basicConfig(level=logging.INFO, format="%(asctime)s | %(levelname)s | %(message)s")
     if seed < 0:
         raise ConfigurationError(f"seed must be non-negative, got {seed}.")
+    if not isinstance(enable_turbo, bool):
+        raise ConfigurationError(f"enable_turbo must be True or False, got {enable_turbo!r}.")
+    denoising_profile = RANK64_DELTA4 if enable_turbo else BASE24
     view_plan = resolve_view_plan(
         views_per_layer=views_per_layer,
         layer_pitches=layer_pitches,
@@ -222,6 +230,7 @@ def run_pipeline(
     # background jobs receive an actionable error instead of hanging.
     ensure_smplx(model_dir, gvhmr_root)
     ensure_models(model_dir, gvhmr_root)
+    turbo_lora = resolve_turbo_lora(model_dir) if enable_turbo else None
     gvhmr_root, gvhmr_revision = validate_gvhmr(gvhmr_root)
     worker_python = os.path.abspath(sys.executable)
 
@@ -273,6 +282,12 @@ def run_pipeline(
             model_identity = {"checkpoint": CHECKPOINT, "repo_id": HF_REPO_ID, "revision": HF_REVISION}
         else:
             model_identity = {"checkpoint": checkpoint.name, "source": "local_override"}
+        if turbo_lora is not None:
+            model_identity["turbo_lora"] = {
+                "name": TURBO_LORA_NAME,
+                "file": TURBO_LORA,
+                "sha256": TURBO_LORA_SHA256,
+            }
 
         with atomic as work:
             # Heavy rendering and generation are imported only after the motion
@@ -306,6 +321,8 @@ def run_pipeline(
                 clip=clip,
                 conditioning=conditioning,
                 checkpoint_path=checkpoint,
+                turbo_lora_path=turbo_lora,
+                denoising_profile=denoising_profile,
                 assets=base_assets,
                 output_dir=scratch / "generation",
                 devices=devices,

@@ -10,8 +10,9 @@
 
 ## News
 
+- **2026-09-02**: Achieved a **5.58×** denoising speedup over the base model using the Wan2.2 5B Turbo LoRA. See [Inference performance](docs/inference_performance.md) for details.
 - **2026-08-28**: Achieved a **1.42×** end-to-end speedup for the complete 24-view generation pipeline.
-- **2026-08-28**: Reduced peak GPU memory to **25.4 GiB** while slightly improving speed. See [Inference performance](docs/inference_performance.md) for details.
+- **2026-08-28**: Reduced peak GPU memory to **25.4 GiB** while slightly improving speed.
 
 ## Installation
 
@@ -94,6 +95,7 @@ Run `python inference.py --help` for the full list.
 - `start_yaw`: horizontal angle of the first view, in degrees. Yaw `0` is the front view.
 - `yaw_span`: horizontal range covered by each camera layer, in degrees.
 - `gpu_ids`: GPU IDs used for parallel pose/VAE view stages and target denoising. Defaults to all visible GPUs.
+- `enable_turbo`: enable the Wan2.2 5B Turbo LoRA. Defaults to `True`; set it to `False` to use the base model.
 
 ### Output
 
@@ -140,8 +142,7 @@ See the [nerfstudio guide](docs/nerfstudio.md) for details.
 ### Inference Acceleration
 
 - [x] Achieve up to 1.42× end-to-end speedup by parallelizing pose encoding and VAE processing across GPUs.
-- [ ] Integrate [Sol-Engine](https://nvlabs.github.io/Sana/Sol-Engine/) (expected 2× speedup).
-- [ ] Distill the model for few-step inference (expected 5× speedup).
+- [x] Accelerate inference with the Wan2.2 5B Turbo LoRA.
 
 ### Reconstruction
 

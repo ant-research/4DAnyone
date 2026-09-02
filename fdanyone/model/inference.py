@@ -18,11 +18,21 @@ from tempfile import TemporaryDirectory
 from typing import TYPE_CHECKING, TypedDict
 
 from fdanyone.assets import BaseAssets
-from fdanyone.config import INFERENCE
+from fdanyone.config import INFERENCE, DenoisingProfile
 from fdanyone.errors import FourDAnyoneError
-from fdanyone.model.conditioning import PoseFeatureBank, PoseFeatureCache, build_pose_feature_cache, load_prompt_context
+from fdanyone.model.conditioning import (
+    PoseFeatureBank,
+    PoseFeatureCache,
+    build_pose_feature_cache,
+    load_prompt_context,
+)
 from fdanyone.model.denoise import denoise_group
-from fdanyone.model.distributed import Routes, WorkerReport, denoise_targets_distributed, select_worker_devices
+from fdanyone.model.distributed import (
+    Routes,
+    WorkerReport,
+    denoise_targets_distributed,
+    select_worker_devices,
+)
 from fdanyone.model.loader import Denoiser, load_denoiser
 from fdanyone.model.metrics import GenerationMetrics
 from fdanyone.model.routing import routing_steps
@@ -32,7 +42,7 @@ from fdanyone.video import CanonicalClip
 from fdanyone.views import ViewPlan
 
 if TYPE_CHECKING:
-    from torch import Tensor, nn
+    from torch import Tensor
 
 LOGGER = logging.getLogger("fdanyone")
 
@@ -55,6 +65,7 @@ class GeneratedViews:
     rcp_videos: tuple[Path, ...]
     target_videos: tuple[Path, ...]
     view_plan: ViewPlan
+    denoising_profile: DenoisingProfile
     seed: int
     device: str
     elapsed_seconds: dict[str, float]
@@ -69,12 +80,11 @@ class _GenerationPlan:
     view_plan: ViewPlan
     candidate_devices: tuple[str, ...]
     primary_device: str
-    primary_device_index: int
     dit_devices: tuple[str, ...]
 
     @property
-    def view_devices(self) -> tuple[str, ...]:
-        return self.candidate_devices
+    def primary_device_index(self) -> int:
+        return int(self.primary_device.removeprefix("cuda:"))
 
     @property
     def distributed(self) -> bool:
@@ -94,15 +104,15 @@ def _empty_cuda_cache() -> None:
 
 
 @contextmanager
-def _model_on_device(model: nn.Module, device: str) -> Iterator[nn.Module]:
-    """Keep one model resident for exactly one exception-safe stage."""
+def _denoiser_on_device(denoiser: Denoiser, device: str) -> Iterator[None]:
+    """Keep one denoiser resident and Turbo-fused for one safe stage."""
 
-    model.to(device)
-    _empty_cuda_cache()
     try:
-        yield model
+        denoiser.prepare_on_device(device)
+        _empty_cuda_cache()
+        yield
     finally:
-        model.to("cpu")
+        denoiser.model.to("cpu")
         _empty_cuda_cache()
 
 
@@ -124,7 +134,14 @@ def _channels_last_source_layout(video):
     return video.contiguous(memory_format=torch.channels_last_3d)
 
 
-def _noise(vae: VaeExecutor, num_views: int, num_frames: int, seed: int, device: str) -> Tensor:
+def _noise(
+    *,
+    vae: VaeExecutor,
+    num_views: int,
+    num_frames: int,
+    seed: int,
+    device: str,
+) -> Tensor:
     import torch
 
     shape = (
@@ -141,26 +158,28 @@ def _noise(vae: VaeExecutor, num_views: int, num_frames: int, seed: int, device:
 
 
 def _denoise_rcp(
+    *,
     denoiser: Denoiser,
     vae: VaeExecutor,
     src_latents: Tensor,
     context: Tensor,
     camera_ids: tuple[int, ...],
     pose_features: PoseFeatureBank,
-    device: str,
     seed: int,
+    device: str,
 ) -> Tensor:
     import torch
     from tqdm.auto import tqdm
 
     if pose_features.num_features != len(camera_ids):
         raise FourDAnyoneError(f"RCP requires {len(camera_ids)} pose features, got {pose_features.num_features}.")
-    denoiser.scheduler.set_timesteps(
-        INFERENCE.num_inference_steps,
-        denoising_strength=INFERENCE.denoising_strength,
-        shift=INFERENCE.scheduler_shift,
+    latents = _noise(
+        vae=vae,
+        num_views=len(camera_ids),
+        num_frames=INFERENCE.num_frames,
+        seed=seed,
+        device=device,
     )
-    latents = _noise(vae, len(camera_ids), INFERENCE.num_frames, seed, device)
     source = src_latents.to(dtype=denoiser.dtype, device=device)
     context = context.to(dtype=denoiser.dtype, device=device)
     pose_feature_batch = pose_features.allocate_group(len(camera_ids), device)
@@ -182,6 +201,7 @@ def _denoise_rcp(
 
 
 def _denoise_targets_single(
+    *,
     denoiser: Denoiser,
     src_latents: Tensor,
     context: Tensor,
@@ -198,11 +218,12 @@ def _denoise_targets_single(
         raise FourDAnyoneError(
             f"Target generation requires {num_views} pose features, got {pose_features.num_features}."
         )
-    denoiser.scheduler.set_timesteps(
-        INFERENCE.num_inference_steps,
-        denoising_strength=INFERENCE.denoising_strength,
-        shift=INFERENCE.scheduler_shift,
-    )
+    num_timesteps = len(denoiser.scheduler.timesteps)
+    if len(routes) != num_timesteps:
+        raise FourDAnyoneError(
+            f"Denoising requires one route per scheduler timestep; got "
+            f"{len(routes)} routes for {num_timesteps} timesteps."
+        )
     latents = initial_latents
     source = src_latents.to(dtype=denoiser.dtype, device=device)
     context = context.to(dtype=denoiser.dtype, device=device)
@@ -231,17 +252,15 @@ def _denoise_targets_single(
 
 
 def _resolve_generation_plan(
+    *,
     clip: CanonicalClip,
     conditioning: Conditioning,
     devices: tuple[str, ...],
-    seed: int,
 ) -> _GenerationPlan:
     import torch
 
     if conditioning.num_frames != INFERENCE.num_frames or len(clip.frames) != INFERENCE.num_frames:
         raise FourDAnyoneError("Generation requires the frozen 121-frame contract.")
-    if seed < 0:
-        raise FourDAnyoneError(f"seed must be non-negative, got {seed}.")
     if not devices:
         raise FourDAnyoneError("Generation requires at least one CUDA device.")
 
@@ -254,7 +273,11 @@ def _resolve_generation_plan(
     primary_device = devices[0]
     primary_device_index = int(primary_device.removeprefix("cuda:"))
     dit_devices = select_worker_devices(devices, view_plan.num_groups)
-    LOGGER.info("Using %s (%s)", primary_device, torch.cuda.get_device_name(primary_device_index))
+    LOGGER.info(
+        "Using %s (%s)",
+        primary_device,
+        torch.cuda.get_device_name(primary_device_index),
+    )
     if len(dit_devices) < len(devices):
         LOGGER.info(
             "Using %d of %d candidate GPUs for DiT and all %d for independent view stages",
@@ -266,7 +289,6 @@ def _resolve_generation_plan(
         view_plan=view_plan,
         candidate_devices=devices,
         primary_device=primary_device,
-        primary_device_index=primary_device_index,
         dit_devices=dit_devices,
     )
 
@@ -275,13 +297,13 @@ def _generate_rcp_and_references(
     *,
     denoiser: Denoiser,
     vae: VaeExecutor,
+    clip: CanonicalClip,
+    plan: _GenerationPlan,
+    seed: int,
     source_latents: Tensor,
     context: Tensor,
     pose_cache: PoseFeatureCache,
-    plan: _GenerationPlan,
     root: Path,
-    clip: CanonicalClip,
-    seed: int,
     metrics: GenerationMetrics,
 ) -> tuple[Tensor, tuple[Path, ...]]:
     import torch
@@ -289,16 +311,19 @@ def _generate_rcp_and_references(
     rcp_pose_features = pose_cache.rcp
     if rcp_pose_features is None:
         raise FourDAnyoneError("RCP was enabled without precomputed proposal pose features.")
-    with metrics.stage("rcp_denoise"), _model_on_device(denoiser.model, plan.primary_device):
+    with (
+        metrics.stage("rcp_denoise"),
+        _denoiser_on_device(denoiser, plan.primary_device),
+    ):
         rcp_latents = _denoise_rcp(
-            denoiser,
-            vae,
-            source_latents,
-            context,
-            plan.view_plan.rcp_camera_ids,
-            rcp_pose_features,
-            plan.primary_device,
-            seed,
+            denoiser=denoiser,
+            vae=vae,
+            src_latents=source_latents,
+            context=context,
+            camera_ids=plan.view_plan.rcp_camera_ids,
+            pose_features=rcp_pose_features,
+            seed=seed,
+            device=plan.primary_device,
         )
 
     with metrics.stage("rcp_decode_and_publish"):
@@ -334,48 +359,50 @@ def _merge_view_stage_peak(metrics: GenerationMetrics, stage: str, vae: VaeExecu
     )
 
 
-def _target_routes(view_plan: ViewPlan) -> Routes:
+def _target_routes(*, view_plan: ViewPlan, profile: DenoisingProfile) -> Routes:
     return routing_steps(
         views_per_layer=view_plan.views_per_layer,
         num_layers=view_plan.num_layers,
         group_size=view_plan.views_per_group,
-        num_steps=INFERENCE.num_inference_steps,
+        num_steps=profile.num_inference_steps,
         enable_tcr=view_plan.enable_tcr,
+        tcr_stride=profile.tcr_stride,
+        freeze_after_one_cycle=profile.freeze_tcr_after_one_cycle,
     )
 
 
 def _denoise_targets_multi_gpu(
     *,
+    checkpoint_path: str | Path,
+    turbo_lora_path: str | Path | None,
+    denoising_profile: DenoisingProfile,
+    plan: _GenerationPlan,
     target_sources: Tensor,
     context: Tensor,
     initial_latents: Tensor,
     pose_features: PoseFeatureBank,
     routes: Routes,
-    checkpoint_path: str | Path,
     root: Path,
-    devices: tuple[str, ...],
-    candidate_devices: tuple[str, ...],
-    num_groups: int,
 ) -> tuple[Tensor, ParallelismReport]:
     with TemporaryDirectory(prefix=".distributed-", dir=root) as work_dir:
         target_latents, workers = denoise_targets_distributed(
+            checkpoint_path=checkpoint_path,
+            turbo_lora_path=turbo_lora_path,
+            denoising_profile=denoising_profile,
             src_latents=target_sources,
             context=context,
             initial_latents=initial_latents,
             pose_features=pose_features,
             routes=routes,
-            checkpoint_path=checkpoint_path,
             work_dir=work_dir,
-            devices=devices,
-            denoising_strength=INFERENCE.denoising_strength,
-            scheduler_shift=INFERENCE.scheduler_shift,
+            devices=plan.dit_devices,
         )
     return target_latents, {
         "backend": "nccl",
-        "candidate_devices": list(candidate_devices),
-        "used_devices": list(devices),
-        "groups_per_step": num_groups,
-        "waves_per_step": math.ceil(num_groups / len(devices)),
+        "candidate_devices": list(plan.candidate_devices),
+        "used_devices": list(plan.dit_devices),
+        "groups_per_step": plan.view_plan.num_groups,
+        "waves_per_step": math.ceil(plan.view_plan.num_groups / len(plan.dit_devices)),
         "workers": workers,
     }
 
@@ -385,6 +412,8 @@ def generate_views(
     clip: CanonicalClip,
     conditioning: Conditioning,
     checkpoint_path: str | Path,
+    turbo_lora_path: str | Path | None,
+    denoising_profile: DenoisingProfile,
     assets: BaseAssets,
     output_dir: str | Path,
     devices: tuple[str, ...],
@@ -392,7 +421,13 @@ def generate_views(
 ) -> GeneratedViews:
     """Generate the proposal (when enabled) and the requested target views."""
 
-    plan = _resolve_generation_plan(clip, conditioning, devices, seed)
+    if seed < 0:
+        raise FourDAnyoneError(f"seed must be non-negative, got {seed}.")
+    plan = _resolve_generation_plan(
+        clip=clip,
+        conditioning=conditioning,
+        devices=devices,
+    )
     root = Path(output_dir).expanduser().resolve()
     root.mkdir(parents=True, exist_ok=False)
     metrics = GenerationMetrics(plan.primary_device_index)
@@ -404,12 +439,20 @@ def generate_views(
         pose_cache = build_pose_feature_cache(
             conditioning=conditioning,
             checkpoint_path=checkpoint_path,
-            devices=plan.view_devices,
+            devices=plan.candidate_devices,
         )
 
     with metrics.stage("model_load"):
-        denoiser = load_denoiser(checkpoint_path=checkpoint_path) if plan.needs_primary_denoiser else None
-        vae = VaeExecutor.load(assets.vae, plan.view_devices)
+        denoiser = (
+            load_denoiser(
+                checkpoint_path=checkpoint_path,
+                turbo_lora_path=turbo_lora_path,
+                profile=denoising_profile,
+            )
+            if plan.needs_primary_denoiser
+            else None
+        )
+        vae = VaeExecutor.load(assets.vae, plan.candidate_devices)
 
     try:
         with metrics.stage("source_encode"):
@@ -426,13 +469,13 @@ def generate_views(
             target_sources, rcp_videos = _generate_rcp_and_references(
                 denoiser=denoiser,
                 vae=vae,
+                clip=clip,
+                plan=plan,
+                seed=seed,
                 source_latents=source_latents,
                 context=context,
                 pose_cache=pose_cache,
-                plan=plan,
                 root=root,
-                clip=clip,
-                seed=seed,
                 metrics=metrics,
             )
         del source_latents
@@ -444,42 +487,42 @@ def generate_views(
 
         parallelism = None
         with metrics.stage("target_denoise"):
-            routes = _target_routes(plan.view_plan)
+            routes = _target_routes(view_plan=plan.view_plan, profile=denoising_profile)
             initial_latents = _noise(
-                vae,
-                plan.view_plan.num_target_views,
-                INFERENCE.num_frames,
-                seed,
-                plan.primary_device,
+                vae=vae,
+                num_views=plan.view_plan.num_target_views,
+                num_frames=INFERENCE.num_frames,
+                seed=seed,
+                device=plan.primary_device,
             )
             if plan.distributed:
                 denoiser = None
                 initial_latents = initial_latents.to("cpu")
                 _empty_cuda_cache()
                 target_latents, parallelism = _denoise_targets_multi_gpu(
+                    checkpoint_path=checkpoint_path,
+                    turbo_lora_path=turbo_lora_path,
+                    denoising_profile=denoising_profile,
+                    plan=plan,
                     target_sources=target_sources,
                     context=context,
                     initial_latents=initial_latents,
                     pose_features=target_pose_features,
                     routes=routes,
-                    checkpoint_path=checkpoint_path,
                     root=root,
-                    devices=plan.dit_devices,
-                    candidate_devices=plan.candidate_devices,
-                    num_groups=plan.view_plan.num_groups,
                 )
             else:
                 if denoiser is None:
                     raise RuntimeError("Single-GPU target generation requires a primary-process denoiser.")
-                with _model_on_device(denoiser.model, plan.primary_device):
+                with _denoiser_on_device(denoiser, plan.primary_device):
                     target_latents = _denoise_targets_single(
-                        denoiser,
-                        target_sources,
-                        context,
-                        target_pose_features,
-                        initial_latents,
-                        routes,
-                        plan.primary_device,
+                        denoiser=denoiser,
+                        src_latents=target_sources,
+                        context=context,
+                        pose_features=target_pose_features,
+                        initial_latents=initial_latents,
+                        routes=routes,
+                        device=plan.primary_device,
                     )
                 denoiser = None
             del initial_latents
@@ -503,6 +546,7 @@ def generate_views(
             rcp_videos=rcp_videos,
             target_videos=target_videos,
             view_plan=plan.view_plan,
+            denoising_profile=denoising_profile,
             seed=seed,
             device=plan.primary_device,
             elapsed_seconds=metrics.elapsed_seconds,

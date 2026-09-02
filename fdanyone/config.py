@@ -28,12 +28,41 @@ class InferenceConfig:
     target_h264_crf: int = 18
     h264_preset: str = "medium"
     skeleton_max_dimension: int = 2048
-    num_inference_steps: int = 24
-    denoising_strength: float = 1.0
-    scheduler_shift: float = 5.0
     tiled_vae: bool = False
     vae_tile_size: tuple[int, int] = (52, 30)
     vae_tile_stride: tuple[int, int] = (26, 15)
+
+
+@dataclass(frozen=True)
+class DenoisingProfile:
+    """Scheduler and target-context routing used by one inference mode."""
+
+    name: str
+    num_inference_steps: int
+    denoising_strength: float
+    scheduler_shift: float
+    tcr_stride: int
+    freeze_tcr_after_one_cycle: bool
+
+    def __post_init__(self) -> None:
+        if self.num_inference_steps <= 0:
+            raise ValueError("Denoising steps must be positive.")
+        if not 0.0 < self.denoising_strength <= 1.0:
+            raise ValueError("Denoising strength must be in (0, 1].")
+        if self.scheduler_shift <= 0.0:
+            raise ValueError("Scheduler shift must be positive.")
+        if self.tcr_stride <= 0:
+            raise ValueError("TCR stride must be positive.")
+
+    def to_dict(self) -> dict[str, object]:
+        return {
+            "name": self.name,
+            "num_inference_steps": self.num_inference_steps,
+            "denoising_strength": self.denoising_strength,
+            "scheduler_shift": self.scheduler_shift,
+            "tcr_stride": self.tcr_stride,
+            "freeze_tcr_after_one_cycle": self.freeze_tcr_after_one_cycle,
+        }
 
 
 @dataclass(frozen=True)
@@ -95,6 +124,22 @@ class SkeletonConfig:
 
 
 INFERENCE = InferenceConfig()
+BASE24 = DenoisingProfile(
+    name="base24",
+    num_inference_steps=24,
+    denoising_strength=1.0,
+    scheduler_shift=5.0,
+    tcr_stride=1,
+    freeze_tcr_after_one_cycle=False,
+)
+RANK64_DELTA4 = DenoisingProfile(
+    name="rank64_delta4",
+    num_inference_steps=4,
+    denoising_strength=1.0,
+    scheduler_shift=5.0,
+    tcr_stride=2,
+    freeze_tcr_after_one_cycle=True,
+)
 CAMERA = CameraConfig()
 FOREGROUND = ForegroundConfig()
 FRAMING = FramingConfig()

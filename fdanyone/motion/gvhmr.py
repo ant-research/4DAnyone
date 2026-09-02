@@ -15,6 +15,7 @@ import json
 import os
 import subprocess
 import sys
+import traceback
 import types
 import warnings
 from collections.abc import Iterator
@@ -67,6 +68,24 @@ def hydra_override(name: str, value: str | Path) -> str:
     if not name.isidentifier():
         raise ValueError(f"Invalid Hydra field name: {name!r}.")
     return f"{name}={json.dumps(str(value), ensure_ascii=False)}"
+
+
+def _full_frame_bbox_xyxy(width: int, height: int) -> tuple[float, float, float, float]:
+    if width <= 0 or height <= 0:
+        raise ValueError(f"Video dimensions must be positive, got {width}x{height}.")
+    return 0.0, 0.0, float(width), float(height)
+
+
+def _is_empty_tracker_error(error: BaseException) -> bool:
+    """Recognize only the pinned GVHMR tracker's empty-result failure."""
+
+    if not isinstance(error, IndexError) or str(error) != "list index out of range":
+        return False
+    frames = traceback.extract_tb(error.__traceback__)
+    return any(
+        frame.name == "get_one_track" and Path(frame.filename).parts[-4:] == ("hmr4d", "utils", "preproc", "tracker.py")
+        for frame in frames
+    )
 
 
 @contextmanager
@@ -163,6 +182,7 @@ def _run_preprocess(cfg) -> None:
     from hmr4d.utils.preproc.vitfeat_extractor import Extractor
     from hmr4d.utils.preproc.vitpose import VitPoseExtractor
     from hmr4d.utils.pylogger import Log
+    from hmr4d.utils.video_io_utils import get_video_lwh
 
     if not bool(cfg.static_cam):
         raise ValueError("4DAnyone requires GVHMR static_cam=true.")
@@ -174,7 +194,20 @@ def _run_preprocess(cfg) -> None:
 
     if not Path(paths.bbx).exists():
         tracker = Tracker()
-        bbx_xyxy = tracker.get_one_track(video_path).float()
+        try:
+            bbx_xyxy = tracker.get_one_track(video_path).float()
+        except IndexError as error:
+            if not _is_empty_tracker_error(error):
+                raise
+            frame_count, width, height = get_video_lwh(video_path)
+            bbx_xyxy = torch.tensor(
+                _full_frame_bbox_xyxy(width, height),
+                dtype=torch.float32,
+            ).repeat(frame_count, 1)
+            Log.warning(
+                "GVHMR tracker produced no usable person track; using a full-frame bbox for "
+                f"all {frame_count} frames of {video_path}."
+            )
         bbx_xys = get_bbx_xys_from_xyxy(bbx_xyxy, base_enlarge=1.2).float()
         torch.save({"bbx_xyxy": bbx_xyxy, "bbx_xys": bbx_xys}, paths.bbx)
         del tracker

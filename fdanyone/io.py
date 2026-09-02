@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import errno
+import hashlib
 import json
 import os
 import shutil
@@ -14,6 +15,16 @@ from pathlib import Path
 from fdanyone.errors import FourDAnyoneError
 
 _RETRYABLE_TREE_ERRORS = {errno.EBUSY, errno.ENOTEMPTY, errno.ESTALE}
+
+
+def sha256_file(path: str | Path, *, chunk_size: int = 8 * 1024 * 1024) -> str:
+    """Hash a file without materializing it in memory."""
+
+    digest = hashlib.sha256()
+    with Path(path).open("rb") as handle:
+        for chunk in iter(lambda: handle.read(chunk_size), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
 
 
 def write_json(path: str | Path, value: object, *, sort_keys: bool = True) -> None:
