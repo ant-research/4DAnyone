@@ -10,6 +10,7 @@ runtime.
 from __future__ import annotations
 
 import math
+from dataclasses import dataclass
 
 import torch
 import torch.nn as nn
@@ -151,6 +152,23 @@ def rope_apply(x: torch.Tensor, freqs: torch.Tensor, num_heads: int) -> torch.Te
     return output.flatten(2)
 
 
+def rope_apply_inplace(x: torch.Tensor, freqs: torch.Tensor, num_heads: int) -> torch.Tensor:
+    """Apply RoPE in the projection buffer during inference."""
+
+    if torch.is_grad_enabled():
+        return rope_apply(x, freqs, num_heads)
+    headed = rearrange(x, "b s (n d) -> b s n d", n=num_heads)
+    fp64_bytes = headed[0].numel() * torch.empty((), dtype=torch.float64).element_size()
+    batch_chunk = max(
+        1,
+        min(headed.shape[0], ROPE_TEMPORARY_BUDGET_BYTES // (2 * fp64_bytes)),
+    )
+    for start in range(0, headed.shape[0], batch_chunk):
+        chunk = headed[start : start + batch_chunk]
+        chunk.copy_(_rotate_rope_chunk(chunk, freqs))
+    return x
+
+
 class RMSNorm(nn.Module):
     def __init__(self, dim: int, eps: float = 1e-5) -> None:
         super().__init__()
@@ -163,6 +181,49 @@ class RMSNorm(nn.Module):
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         dtype = x.dtype
         return self._normalize_float(x.float()).to(dtype) * self.weight
+
+    def forward_inplace(self, x: torch.Tensor) -> torch.Tensor:
+        if torch.is_grad_enabled():
+            return self.forward(x)
+        x.copy_(self.forward(x))
+        return x
+
+
+@dataclass(frozen=True)
+class CrossAttentionKV:
+    """Projected prompt keys and values shared by every denoising step."""
+
+    key: torch.Tensor
+    value: torch.Tensor
+
+    def for_views(self, views: int) -> tuple[torch.Tensor, torch.Tensor]:
+        return self.key.expand(views, -1, -1), self.value.expand(views, -1, -1)
+
+
+@dataclass(frozen=True)
+class DiTRequestContext:
+    """Exact tensors that remain invariant during one denoising stage."""
+
+    target_views: int
+    packed_views: int
+    grid_size: tuple[int, int, int]
+    source_tokens: torch.Tensor
+    spatial_freqs: torch.Tensor
+    multiview_freqs: torch.Tensor
+    cross_attention: tuple[CrossAttentionKV, ...]
+
+    @property
+    def retained_bytes(self) -> int:
+        tensors = (
+            self.source_tokens,
+            self.spatial_freqs,
+            self.multiview_freqs,
+            *(tensor for pair in self.cross_attention for tensor in (pair.key, pair.value)),
+        )
+        # Report the bytes that the request really keeps alive, once per
+        # allocation, even if a future representation introduces views.
+        storages = {tensor.untyped_storage().data_ptr(): tensor.untyped_storage().nbytes() for tensor in tensors}
+        return sum(storages.values())
 
 
 class SelfAttention(nn.Module):
@@ -177,12 +238,14 @@ class SelfAttention(nn.Module):
         self.norm_k = RMSNorm(dim, eps=eps)
 
     def forward(self, x: torch.Tensor, freqs: torch.Tensor) -> torch.Tensor:
-        q = self.norm_q(self.q(x))
-        k = self.norm_k(self.k(x))
+        q = self.norm_q.forward_inplace(self.q(x))
+        k = self.norm_k.forward_inplace(self.k(x))
         v = self.v(x)
-        q = rope_apply(q, freqs, self.num_heads)
-        k = rope_apply(k, freqs, self.num_heads)
-        return self.o(attention(q, k, v, self.num_heads))
+        q = rope_apply_inplace(q, freqs, self.num_heads)
+        k = rope_apply_inplace(k, freqs, self.num_heads)
+        attended = attention(q, k, v, self.num_heads)
+        del q, k, v
+        return self.o(attended)
 
 
 class CrossAttention(nn.Module):
@@ -196,11 +259,23 @@ class CrossAttention(nn.Module):
         self.norm_q = RMSNorm(dim, eps=eps)
         self.norm_k = RMSNorm(dim, eps=eps)
 
-    def forward(self, x: torch.Tensor, context: torch.Tensor) -> torch.Tensor:
-        q = self.norm_q(self.q(x))
-        k = self.norm_k(self.k(context))
-        v = self.v(context)
-        return self.o(attention(q, k, v, self.num_heads))
+    def project_context(self, context: torch.Tensor, views: int) -> CrossAttentionKV:
+        # Projection kernels can choose different BF16 accumulation paths for
+        # different leading dimensions. Match the original per-forward shape
+        # once so reuse remains bit-identical, rather than projecting one batch
+        # and expanding it afterward.
+        context = repeat(context, "1 l c -> v l c", v=views)
+        key = self.norm_k.forward_inplace(self.k(context))
+        value = self.v(context)
+        # Every repeated view is identical. Keep one compact owning batch after
+        # the numerically significant projection has run at its original shape.
+        return CrossAttentionKV(key[:1].clone(), value[:1].clone())
+
+    def forward(self, x: torch.Tensor, context_kv: CrossAttentionKV) -> torch.Tensor:
+        q = self.q(x)
+        q = self.norm_q.forward_inplace(q)
+        key, value = context_kv.for_views(x.shape[0])
+        return self.o(attention(q, key, value, self.num_heads))
 
 
 class DiTBlock(nn.Module):
@@ -259,7 +334,7 @@ class DiTBlock(nn.Module):
     def forward(
         self,
         x: torch.Tensor,
-        context: torch.Tensor,
+        context_kv: CrossAttentionKV,
         time_modulation: torch.Tensor,
         spatial_freqs: torch.Tensor,
         multiview_freqs: torch.Tensor,
@@ -283,7 +358,7 @@ class DiTBlock(nn.Module):
             shape,
         )
 
-        x = x + self.cross_attn(self.norm3(x), repeat(context, "1 l c -> v l c", v=x.shape[0]))
+        x = x + self.cross_attn(self.norm3(x), context_kv)
 
         residual = self._feed_forward(modulate(self.norm2(x), shift_mlp, scale_mlp))
         return x + gate_mlp * residual
@@ -425,12 +500,10 @@ class FourDAnyoneDiT(nn.Module):
             .to(device)
         )
 
-    def _pack_sources(
+    def _prepare_source_tokens(
         self,
-        x: torch.Tensor,
         sources: torch.Tensor,
-        grid_size: tuple[int, int, int],
-    ) -> tuple[torch.Tensor, int]:
+    ) -> tuple[torch.Tensor, int, tuple[int, int, int]]:
         source_views = int(sources.shape[0])
         if source_views == 1:
             primary_source = sources
@@ -441,8 +514,8 @@ class FourDAnyoneDiT(nn.Module):
         else:
             raise ValueError(f"4DAnyone requires 1 or 5 source views, got {source_views}.")
 
-        primary_tokens, _ = self._patchify(primary_source)
-        x = torch.cat([x, primary_tokens], dim=0)
+        primary_tokens, grid_size = self._patchify(primary_source)
+        source_tokens = primary_tokens
         packed_views = 1
 
         if reference_sources is not None:
@@ -452,70 +525,104 @@ class FourDAnyoneDiT(nn.Module):
             packed = rearrange(packed, "(g1 g2) c f h w -> 1 c f (g1 h) (g2 w)", g1=2, g2=2)
             frames, height, width = grid_size
             packed = packed[:, :, :frames, :height, :width]
-            packed = rearrange(packed, "1 c f h w -> 1 (f h w) c").to(dtype=x.dtype)
-            x = torch.cat([x, packed], dim=0)
+            packed = rearrange(packed, "1 c f h w -> 1 (f h w) c").to(dtype=source_tokens.dtype)
+            source_tokens = torch.cat([source_tokens, packed], dim=0)
             packed_views += 1
-        return x, packed_views
+        return source_tokens, packed_views, grid_size
 
     @staticmethod
-    def _add_pose_features(
-        x: torch.Tensor,
+    def _add_target_pose_features(
+        target_tokens: torch.Tensor,
         pose_features: torch.Tensor,
-        null_pose_feature: torch.Tensor,
         target_views: int,
-        packed_views: int,
         grid_size: tuple[int, int, int],
     ) -> torch.Tensor:
         frames, height, width = grid_size
         expected_pose = (target_views, MODEL_DIM, frames, height, width)
-        expected_null = (packed_views, MODEL_DIM, frames, height, width)
         if tuple(pose_features.shape) != expected_pose:
             raise ValueError(f"Expected pose features {expected_pose}, got {tuple(pose_features.shape)}.")
+        pose_tokens = rearrange(pose_features, "v c f h w -> v (f h w) c")
+        if torch.is_grad_enabled():
+            return target_tokens + pose_tokens
+        target_tokens.add_(pose_tokens)
+        return target_tokens
+
+    def prepare_request(
+        self,
+        *,
+        x_src: torch.Tensor,
+        context: torch.Tensor,
+        null_pose_feature: torch.Tensor,
+        target_views: int,
+    ) -> DiTRequestContext:
+        """Project immutable source and prompt conditioning exactly once."""
+
+        if target_views <= 0:
+            raise ValueError(f"A denoising request requires target views, got {target_views}.")
+        if context.shape[0] != 1:
+            raise ValueError(f"4DAnyone requires one shared prompt context, got {context.shape[0]}.")
+
+        source_tokens, packed_views, grid_size = self._prepare_source_tokens(x_src)
+        frames, height, width = grid_size
+        expected_null = (packed_views, MODEL_DIM, frames, height, width)
         if tuple(null_pose_feature.shape) != expected_null:
             raise ValueError(f"Expected null pose features {expected_null}, got {tuple(null_pose_feature.shape)}.")
-        pose_tokens = rearrange(pose_features, "v c f h w -> v (f h w) c")
         null_tokens = rearrange(null_pose_feature, "v c f h w -> v (f h w) c")
-        if torch.is_grad_enabled():
-            return torch.cat([x[:target_views] + pose_tokens, x[target_views:] + null_tokens], dim=0)
-        x[:target_views].add_(pose_tokens)
-        x[target_views:].add_(null_tokens)
-        return x
+        source_tokens = source_tokens + null_tokens
+
+        embedded_context = self.text_embedding(context)
+        total_views = target_views + packed_views
+        cross_attention = tuple(
+            block.cross_attn.project_context(embedded_context, total_views) for block in self.blocks
+        )
+        return DiTRequestContext(
+            target_views=target_views,
+            packed_views=packed_views,
+            grid_size=grid_size,
+            source_tokens=source_tokens,
+            spatial_freqs=self._spatial_frequencies(frames, height, width, source_tokens.device),
+            multiview_freqs=self._multiview_frequencies(total_views, height, width, source_tokens.device),
+            cross_attention=cross_attention,
+        )
 
     def forward(
         self,
         *,
         x: torch.Tensor,
-        x_src: torch.Tensor,
         timestep: torch.Tensor,
-        context: torch.Tensor,
         pose_features: torch.Tensor,
-        null_pose_feature: torch.Tensor,
+        request: DiTRequestContext,
     ) -> torch.Tensor:
-        context = self.text_embedding(context)
         target_views = int(x.shape[0])
-        x, grid_size = self._patchify(x)
-        frames, height, width = grid_size
-        spatial_freqs = self._spatial_frequencies(frames, height, width, x.device)
-
-        x, packed_views = self._pack_sources(x, x_src, grid_size)
-        timestep = torch.cat([timestep, torch.zeros(packed_views, dtype=timestep.dtype, device=timestep.device)])
-        time_embedding = self.time_embedding(sinusoidal_embedding_1d(FREQUENCY_DIM, timestep).to(x.dtype))
+        if target_views != request.target_views:
+            raise ValueError(f"Request has {request.target_views} target views, got {target_views}.")
+        target_tokens, grid_size = self._patchify(x)
+        if grid_size != request.grid_size:
+            raise ValueError(f"Request grid {request.grid_size} does not match target grid {grid_size}.")
+        timestep = torch.cat(
+            [timestep, torch.zeros(request.packed_views, dtype=timestep.dtype, device=timestep.device)]
+        )
+        time_embedding = self.time_embedding(sinusoidal_embedding_1d(FREQUENCY_DIM, timestep).to(target_tokens.dtype))
         time_modulation = self.time_projection(time_embedding).unflatten(1, (6, MODEL_DIM))
-
-        x = self._add_pose_features(
-            x,
+        target_tokens = self._add_target_pose_features(
+            target_tokens,
             pose_features,
-            null_pose_feature,
             target_views,
-            packed_views,
             grid_size,
         )
-        total_views = target_views + packed_views
-        multiview_freqs = self._multiview_frequencies(total_views, height, width, x.device)
+        x = torch.cat([target_tokens, request.source_tokens], dim=0)
+        total_views = target_views + request.packed_views
+        frames, height, width = grid_size
         shape = (total_views, frames, height, width)
-        for block in self.blocks:
-            x = block(x, context, time_modulation, spatial_freqs, multiview_freqs, shape)
+        for block, context_kv in zip(self.blocks, request.cross_attention, strict=True):
+            x = block(
+                x,
+                context_kv,
+                time_modulation,
+                request.spatial_freqs,
+                request.multiview_freqs,
+                shape,
+            )
 
         x = x[:target_views]
-        time_embedding = time_embedding[:target_views]
-        return self._unpatchify(self.head(x, time_embedding), grid_size)
+        return self._unpatchify(self.head(x, time_embedding[:target_views]), grid_size)

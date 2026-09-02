@@ -26,6 +26,7 @@ if TYPE_CHECKING:
     from torch import Tensor
 
     from fdanyone.model.conditioning import PoseFeatureBank
+    from fdanyone.model.denoise import DenoisingRequest
     from fdanyone.model.loader import Denoiser
 
 LOGGER = logging.getLogger("fdanyone")
@@ -46,6 +47,7 @@ class WorkerReport(TypedDict):
     denoise_seconds: float
     peak_vram_allocated_bytes: int
     peak_vram_reserved_bytes: int
+    denoiser_runtime: dict[str, object]
 
 
 @dataclass(frozen=True)
@@ -153,11 +155,9 @@ class _WorkerState:
     rank: int
     request: DistributedDenoiseRequest
     denoiser: Denoiser
+    runtime: DenoisingRequest
     device: str
     device_index: int
-    source: Tensor
-    context: Tensor
-    null_pose_feature: Tensor
     pose_features: Tensor
     latents: Tensor | None
     pose_feature_batch: Tensor
@@ -197,21 +197,11 @@ class _WorkerState:
         if self.rank >= len(wave):
             return torch.zeros_like(local_input)
 
-        from fdanyone.model.denoise import denoise_group
-
         group = wave[self.rank]
         for output_index, camera_id in enumerate(group):
             self.pose_feature_batch[output_index].copy_(self.pose_features[camera_id])
         with torch.inference_mode(), torch.autocast(device_type="cuda", dtype=torch.bfloat16):
-            return denoise_group(
-                self.denoiser,
-                local_input,
-                self.source,
-                self.context,
-                self.pose_feature_batch,
-                self.null_pose_feature,
-                step_index,
-            )
+            return self.runtime.step(local_input, self.pose_feature_batch, step_index, group)
 
     def _gather_and_commit(self, local_result: Tensor, wave: StepGroups) -> None:
         import torch
@@ -246,6 +236,8 @@ class _WorkerState:
 def _load_worker_state(rank: int, request: DistributedDenoiseRequest, denoiser: Denoiser) -> _WorkerState:
     import torch
 
+    from fdanyone.model.denoise import DenoisingRequest
+
     device = request.devices[rank]
     payload = torch.load(
         Path(request.work_dir) / "inputs.pt",
@@ -265,15 +257,25 @@ def _load_worker_state(rank: int, request: DistributedDenoiseRequest, denoiser: 
         denoising_strength=request.denoising_strength,
         shift=request.scheduler_shift,
     )
+    source = payload["source"].to(dtype=denoiser.dtype, device=device)
+    context = payload["context"].to(dtype=denoiser.dtype, device=device)
+    null_pose_feature = payload["null_pose_feature"].to(dtype=denoiser.dtype, device=device)
+    with torch.inference_mode(), torch.autocast(device_type="cuda", dtype=torch.bfloat16):
+        runtime = DenoisingRequest(
+            denoiser,
+            source=source,
+            context=context,
+            null_pose_feature=null_pose_feature,
+            target_views=group_size,
+            stage="target",
+        )
     return _WorkerState(
         rank=rank,
         request=request,
         denoiser=denoiser,
+        runtime=runtime,
         device=device,
         device_index=int(device.removeprefix("cuda:")),
-        source=payload["source"].to(dtype=denoiser.dtype, device=device),
-        context=payload["context"].to(dtype=denoiser.dtype, device=device),
-        null_pose_feature=payload["null_pose_feature"].to(dtype=denoiser.dtype, device=device),
         pose_features=pose_features,
         latents=payload["initial_latents"].to(dtype=denoiser.dtype, device=device) if rank == 0 else None,
         pose_feature_batch=torch.empty(
@@ -333,6 +335,7 @@ def _worker(rank: int, request: DistributedDenoiseRequest) -> None:
         world_size=len(request.devices),
         timeout=timedelta(minutes=30),
     )
+    state = None
     try:
         state = _load_worker_state(rank, request, denoiser)
         dist.barrier(device_ids=[device_index])
@@ -350,10 +353,13 @@ def _worker(rank: int, request: DistributedDenoiseRequest) -> None:
             "denoise_seconds": denoise_seconds,
             "peak_vram_allocated_bytes": int(torch.cuda.max_memory_allocated(device_index)),
             "peak_vram_reserved_bytes": int(torch.cuda.max_memory_reserved(device_index)),
+            "denoiser_runtime": state.runtime.report(),
         }
         _publish_worker_result(state, report)
         dist.barrier(device_ids=[device_index])
     finally:
+        if state is not None:
+            state.runtime.close()
         if dist.is_initialized():
             dist.destroy_process_group()
 

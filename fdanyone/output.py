@@ -171,6 +171,7 @@ def export_result(
         "total_elapsed_seconds": total_elapsed,
         "peak_vram_allocated_bytes": generated.peak_vram_allocated_bytes,
         "peak_vram_reserved_bytes": generated.peak_vram_reserved_bytes,
+        "denoiser_runtime": generated.denoiser_runtime,
     }
     if generated.parallelism is not None:
         generation_metadata["parallelism"] = generated.parallelism

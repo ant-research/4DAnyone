@@ -21,7 +21,7 @@ from fdanyone.assets import BaseAssets
 from fdanyone.config import INFERENCE
 from fdanyone.errors import FourDAnyoneError
 from fdanyone.model.conditioning import PoseFeatureBank, PoseFeatureCache, build_pose_feature_cache, load_prompt_context
-from fdanyone.model.denoise import denoise_group
+from fdanyone.model.denoise import DenoisingRequest
 from fdanyone.model.distributed import Routes, WorkerReport, denoise_targets_distributed, select_worker_devices
 from fdanyone.model.loader import Denoiser, load_denoiser
 from fdanyone.model.metrics import GenerationMetrics
@@ -62,6 +62,7 @@ class GeneratedViews:
     peak_vram_allocated_bytes: int
     peak_vram_reserved_bytes: int
     parallelism: ParallelismReport | None = None
+    denoiser_runtime: dict[str, object] | None = None
 
 
 @dataclass(frozen=True)
@@ -149,7 +150,7 @@ def _denoise_rcp(
     pose_features: PoseFeatureBank,
     device: str,
     seed: int,
-) -> Tensor:
+) -> tuple[Tensor, dict[str, object]]:
     import torch
     from tqdm.auto import tqdm
 
@@ -167,18 +168,22 @@ def _denoise_rcp(
     pose_features.copy_group(tuple(range(len(camera_ids))), pose_feature_batch)
     null_pose_feature = pose_features.null_on(device)
 
-    with torch.inference_mode(), _bf16_autocast():
+    with (
+        torch.inference_mode(),
+        _bf16_autocast(),
+        DenoisingRequest(
+            denoiser,
+            source=source,
+            context=context,
+            null_pose_feature=null_pose_feature,
+            target_views=len(camera_ids),
+            stage="rcp",
+        ) as request,
+    ):
         for step_index, _ in enumerate(tqdm(denoiser.scheduler.timesteps, desc=f"RCP 1-to-{len(camera_ids)}")):
-            latents = denoise_group(
-                denoiser,
-                latents,
-                source,
-                context,
-                pose_feature_batch,
-                null_pose_feature,
-                step_index,
-            )
-    return latents.detach().to("cpu")
+            latents = request.step(latents, pose_feature_batch, step_index, camera_ids)
+        runtime_report = request.report()
+    return latents.detach().to("cpu"), runtime_report
 
 
 def _denoise_targets_single(
@@ -189,7 +194,7 @@ def _denoise_targets_single(
     initial_latents: Tensor,
     routes: Routes,
     device: str,
-) -> Tensor:
+) -> tuple[Tensor, dict[str, object]]:
     import torch
     from tqdm.auto import tqdm
 
@@ -210,24 +215,28 @@ def _denoise_targets_single(
     group_size = len(routes[0][0])
     pose_feature_batch = pose_features.allocate_group(group_size, device)
 
-    with torch.inference_mode(), _bf16_autocast():
+    with (
+        torch.inference_mode(),
+        _bf16_autocast(),
+        DenoisingRequest(
+            denoiser,
+            source=source,
+            context=context,
+            null_pose_feature=null_pose_feature,
+            target_views=group_size,
+            stage="target",
+        ) as request,
+    ):
         for step_index, groups in enumerate(tqdm(routes, desc=f"Generate {num_views} target views")):
             for view_indices in groups:
                 index = torch.tensor(view_indices, dtype=torch.long, device=device)
                 local_latents = torch.index_select(latents, 0, index)
                 pose_features.copy_group(view_indices, pose_feature_batch)
-                local_latents = denoise_group(
-                    denoiser,
-                    local_latents,
-                    source,
-                    context,
-                    pose_feature_batch,
-                    null_pose_feature,
-                    step_index,
-                )
+                local_latents = request.step(local_latents, pose_feature_batch, step_index, view_indices)
                 latents.index_copy_(0, index, local_latents)
                 del local_latents
-    return latents.detach().to("cpu")
+        runtime_report = request.report()
+    return latents.detach().to("cpu"), runtime_report
 
 
 def _resolve_generation_plan(
@@ -283,14 +292,14 @@ def _generate_rcp_and_references(
     clip: CanonicalClip,
     seed: int,
     metrics: GenerationMetrics,
-) -> tuple[Tensor, tuple[Path, ...]]:
+) -> tuple[Tensor, tuple[Path, ...], dict[str, object]]:
     import torch
 
     rcp_pose_features = pose_cache.rcp
     if rcp_pose_features is None:
         raise FourDAnyoneError("RCP was enabled without precomputed proposal pose features.")
     with metrics.stage("rcp_denoise"), _model_on_device(denoiser.model, plan.primary_device):
-        rcp_latents = _denoise_rcp(
+        rcp_latents, runtime_report = _denoise_rcp(
             denoiser,
             vae,
             source_latents,
@@ -321,7 +330,7 @@ def _generate_rcp_and_references(
         reference_latents = vae.encode(reference_videos)
         target_sources = torch.cat([source_latents, reference_latents], dim=0)
     _merge_view_stage_peak(metrics, "reference_encode", vae)
-    return target_sources, published.videos
+    return target_sources, published.videos, runtime_report
 
 
 def _merge_view_stage_peak(metrics: GenerationMetrics, stage: str, vae: VaeExecutor) -> None:
@@ -419,11 +428,12 @@ def generate_views(
         _merge_view_stage_peak(metrics, "source_encode", vae)
 
         rcp_videos: tuple[Path, ...] = ()
+        rcp_runtime: dict[str, object] | None = None
         target_sources = source_latents
         if plan.view_plan.enable_rcp:
             if denoiser is None:
                 raise RuntimeError("RCP requires a primary-process denoiser.")
-            target_sources, rcp_videos = _generate_rcp_and_references(
+            target_sources, rcp_videos, rcp_runtime = _generate_rcp_and_references(
                 denoiser=denoiser,
                 vae=vae,
                 source_latents=source_latents,
@@ -443,6 +453,7 @@ def generate_views(
         del pose_cache
 
         parallelism = None
+        target_runtime: dict[str, object] | list[dict[str, object]] | None = None
         with metrics.stage("target_denoise"):
             routes = _target_routes(plan.view_plan)
             initial_latents = _noise(
@@ -468,11 +479,12 @@ def generate_views(
                     candidate_devices=plan.candidate_devices,
                     num_groups=plan.view_plan.num_groups,
                 )
+                target_runtime = [worker["denoiser_runtime"] for worker in parallelism["workers"]]
             else:
                 if denoiser is None:
                     raise RuntimeError("Single-GPU target generation requires a primary-process denoiser.")
                 with _model_on_device(denoiser.model, plan.primary_device):
-                    target_latents = _denoise_targets_single(
+                    target_latents, target_runtime = _denoise_targets_single(
                         denoiser,
                         target_sources,
                         context,
@@ -510,6 +522,11 @@ def generate_views(
             peak_vram_allocated_bytes=metrics.peak_vram_allocated_bytes,
             peak_vram_reserved_bytes=metrics.peak_vram_reserved_bytes,
             parallelism=parallelism,
+            denoiser_runtime={
+                "policy": "exact-eager",
+                "rcp": rcp_runtime,
+                "target": target_runtime,
+            },
         )
     finally:
         vae.close()
