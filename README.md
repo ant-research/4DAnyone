@@ -144,7 +144,7 @@ See the [nerfstudio guide](docs/nerfstudio.md) for details.
 ### Inference Acceleration
 
 - [x] Achieve up to 1.42× end-to-end speedup by parallelizing pose encoding and VAE processing across GPUs.
-- [x] Accelerate denoising with 4DAnyone-Turbo.
+- [x] Achieve a **5.58×** denoising speedup with 4DAnyone-Turbo.
 
 ### Reconstruction
 
