@@ -28,14 +28,13 @@ from fdanyone.model.conditioning import (
 )
 from fdanyone.model.denoise import denoise_group
 from fdanyone.model.distributed import (
-    Routes,
     WorkerReport,
     denoise_targets_distributed,
     select_worker_devices,
 )
 from fdanyone.model.loader import Denoiser, load_denoiser
 from fdanyone.model.metrics import GenerationMetrics
-from fdanyone.model.routing import routing_steps
+from fdanyone.model.routing import Routes, routing_steps, validate_routes
 from fdanyone.model.vae import VaeExecutor, load_reference_videos
 from fdanyone.skeleton.pipeline import Conditioning
 from fdanyone.video import CanonicalClip
@@ -218,6 +217,7 @@ def _denoise_targets_single(
         raise FourDAnyoneError(
             f"Target generation requires {num_views} pose features, got {pose_features.num_features}."
         )
+    validate_routes(routes, num_views)
     num_timesteps = len(denoiser.scheduler.timesteps)
     if len(routes) != num_timesteps:
         raise FourDAnyoneError(
@@ -361,11 +361,8 @@ def _merge_view_stage_peak(metrics: GenerationMetrics, stage: str, vae: VaeExecu
 
 def _target_routes(*, view_plan: ViewPlan, profile: DenoisingProfile) -> Routes:
     return routing_steps(
-        views_per_layer=view_plan.views_per_layer,
-        num_layers=view_plan.num_layers,
-        group_size=view_plan.views_per_group,
+        view_plan=view_plan,
         num_steps=profile.num_inference_steps,
-        enable_tcr=view_plan.enable_tcr,
         tcr_stride=profile.tcr_stride,
         freeze_after_one_cycle=profile.freeze_tcr_after_one_cycle,
     )

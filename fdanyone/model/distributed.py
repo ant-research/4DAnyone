@@ -21,6 +21,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, TypedDict
 
 from fdanyone.errors import FourDAnyoneError
+from fdanyone.model.routing import CameraGroup, Routes, StepGroups, validate_routes
 
 if TYPE_CHECKING:
     from torch import Tensor
@@ -30,10 +31,6 @@ if TYPE_CHECKING:
     from fdanyone.model.loader import Denoiser
 
 LOGGER = logging.getLogger("fdanyone")
-
-CameraGroup = tuple[int, ...]
-StepGroups = tuple[CameraGroup, ...]
-Routes = tuple[StepGroups, ...]
 
 
 class WorkerReport(TypedDict):
@@ -88,28 +85,6 @@ def group_waves(groups: Sequence[CameraGroup], num_workers: int) -> tuple[StepGr
     if num_workers <= 0:
         raise ValueError(f"num_workers must be positive, got {num_workers}.")
     return tuple(tuple(groups[start : start + num_workers]) for start in range(0, len(groups), num_workers))
-
-
-def validate_routes(routes: Routes, num_views: int) -> None:
-    """Require every routing step to be a disjoint canonical camera partition."""
-
-    expected = list(range(num_views))
-    if not routes:
-        raise ValueError("Distributed denoising requires at least one routing step.")
-    if not routes[0] or not routes[0][0]:
-        raise ValueError("Distributed denoising requires non-empty camera groups.")
-    num_groups = len(routes[0])
-    group_size = len(routes[0][0])
-    for step_index, groups in enumerate(routes):
-        if len(groups) != num_groups:
-            raise ValueError(f"Routing step {step_index} has {len(groups)} groups; every step must have {num_groups}.")
-        if any(len(group) != group_size for group in groups):
-            raise ValueError(f"Routing step {step_index} contains camera groups with inconsistent sizes.")
-        flattened = sorted(camera for group in groups for camera in group)
-        if flattened != expected:
-            raise ValueError(
-                f"Routing step {step_index} is not a disjoint partition of cameras 0..{num_views - 1}: {groups}."
-            )
 
 
 def _free_local_port() -> int:

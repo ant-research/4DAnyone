@@ -162,7 +162,7 @@ def export_result(
             **view_plan.to_dict(),
             "num_layers": view_plan.num_layers,
             "num_target_views": view_plan.num_target_views,
-            "groups_per_layer": view_plan.groups_per_layer,
+            "num_groups": view_plan.num_groups,
         },
         "attention_backend": attention_backend,
         "inference_steps": generated.denoising_profile.num_inference_steps,

@@ -1,7 +1,7 @@
 """Wan/SpaTem DiT graph used by the released 4DAnyone checkpoint.
 
 This module intentionally contains one inference architecture. The public
-method always uses video self-attention, layer-local multiview attention,
+method always uses video self-attention, routed multiview attention,
 ViewPack source tokens, frozen text context, and precomputed RGB-pose features.
 Training-only adapters and alternate Wan model families are outside the reader
 runtime.

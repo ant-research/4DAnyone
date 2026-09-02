@@ -48,12 +48,8 @@ class ViewPlan:
         return self.views_per_layer * self.num_layers
 
     @property
-    def groups_per_layer(self) -> int:
-        return self.views_per_layer // self.views_per_group
-
-    @property
     def num_groups(self) -> int:
-        return self.groups_per_layer * self.num_layers
+        return self.num_target_views // self.views_per_group
 
     @property
     def target_views(self) -> tuple[TargetView, ...]:
