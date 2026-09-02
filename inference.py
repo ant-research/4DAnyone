@@ -46,8 +46,8 @@ def inference(
         enable_rcp: Use proposal views before generating more than six targets.
             The proposal count follows views_per_group.
         enable_tcr: Shift view groups cyclically between denoising steps.
-        enable_turbo: Use the Wan2.2 5B Turbo LoRA for accelerated denoising.
-            Disable it to use the unfused base model.
+        enable_turbo: Whether to use 4DAnyone-Turbo for accelerated denoising.
+            Disable it to use the base 4DAnyone model.
         data_dir: Root for reusable GVHMR motion and final 4DAnyone outputs.
         model_dir: Model root; missing public checkpoints download here.
         checkpoint_path: Local 4DAnyone checkpoint override.

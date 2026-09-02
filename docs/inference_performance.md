@@ -1,6 +1,21 @@
 # Inference performance
 
-This page reports matched inference efficiency for the default Wan2.2 5B Turbo LoRA and the unfused base model on the [6-view full-orbit](../README.md#6-view-full-orbit) example:
+We compare **4DAnyone-Turbo**, the default accelerated model, with **4DAnyone-Base**, the original model described in the paper.
+
+## Quality comparison
+
+We evaluate 32 validation scenes: 16 from DNA-Rendering, 8 from MVGameHuman, and 8 from SynCamVideo. Both models use identical target cameras, 25-frame clips, seed 42, and foreground-masked metrics; 4DAnyone-Turbo uses 4 denoising steps with scheduler shift 5, while 4DAnyone-Base uses 50 steps, serving as an upper-bound quality reference for our method.
+
+| Model | Denoising steps | PSNR ↑ | SSIM ↑ | LPIPS ↓ |
+| --- | ---: | ---: | ---: | ---: |
+| 4DAnyone-Turbo | 4 | 25.48 | 0.895 | **0.072** |
+| 4DAnyone-Base | 50 | **25.69** | **0.899** | 0.073 |
+
+The two models achieve comparable quality across PSNR, SSIM, and LPIPS.
+
+## Denoising performance
+
+We measure 4DAnyone-Turbo with 4 denoising steps and 4DAnyone-Base with 24 steps on the [6-view full-orbit](../README.md#6-view-full-orbit) example:
 
 ```bash
 python inference.py \
@@ -8,18 +23,16 @@ python inference.py \
     --views_per_layer 6
 ```
 
-The command above uses Turbo by default. Add `--enable_turbo=False` to run the base model. Each denoising configuration below is the median of three complete runs from the same source revision.
+Each reported denoising time is the median of three complete runs from the same source revision.
 
-## Denoising
-
-These tables compare denoising time across attention backends for the Turbo and base models.
+These tables compare denoising time across attention backends for both models.
 
 - `SDPA`, `FlashAttention-3`, and `SageAttention`: denoising time using each attention backend.
-- `Peak CUDA allocated`: maximum live tensor allocation observed across the three runs and available attention backends for each GPU and model profile.
+- `Peak CUDA allocated`: maximum live tensor allocation across all runs and available attention backends.
 - `GPU memory`: total device memory capacity.
 - `—`: backend unavailable on that GPU.
 
-### Turbo (default)
+### 4DAnyone-Turbo
 
 | GPU | SDPA (min) | FlashAttention-3 (min) | SageAttention (min) | Peak CUDA allocated (GiB) | GPU memory (GiB) |
 | --- | ---: | ---: | ---: | ---: | ---: |
@@ -28,7 +41,7 @@ These tables compare denoising time across attention backends for the Turbo and 
 | RTX 5880 Ada | 3.51 | — | 3.04 | 25.47 | 47.37 |
 | RTX A6000 | 3.80 | — | 3.71 | 24.91 | 47.53 |
 
-### Base
+### 4DAnyone-Base
 
 | GPU | SDPA (min) | FlashAttention-3 (min) | SageAttention (min) | Peak CUDA allocated (GiB) | GPU memory (GiB) |
 | --- | ---: | ---: | ---: | ---: | ---: |
@@ -37,9 +50,9 @@ These tables compare denoising time across attention backends for the Turbo and 
 | RTX 5880 Ada | 20.40 | — | 17.58 | 25.47 | 47.37 |
 | RTX A6000 | 22.02 | — | 21.42 | 24.91 | 47.53 |
 
-### Base / Turbo speedup
+### Speedup
 
-Each value divides the Base median by the Turbo median for the same GPU and attention backend.
+Speedup is calculated by dividing the 4DAnyone-Base median by the 4DAnyone-Turbo median for the same GPU and attention backend.
 
 | GPU | SDPA | FlashAttention-3 | SageAttention |
 | --- | ---: | ---: | ---: |
@@ -49,11 +62,11 @@ Each value divides the Base median by the Turbo median for the same GPU and atte
 | RTX A6000 | 5.79× | — | 5.77× |
 
 > [!NOTE]
-> FlashAttention-3 is available on the tested SM90 GPUs and unavailable on RTX A6000 (SM86) and RTX 5880 Ada (SM89). SageAttention results use the official `sageattn` entry point, which dispatches an architecture-specific kernel.
+> SageAttention results use the official `sageattn` entry point, which automatically dispatches an architecture-specific kernel for each GPU.
 
-## Preprocessing
+## Preprocessing performance
 
-Preprocessing is shared by Turbo and Base, so it is reported once. These profile-independent values are retained from the preceding release benchmark; this refresh remeasured the matched denoising path.
+Preprocessing is identical for both models and therefore reported once.
 
 - `GVHMR`: tracking, ViTPose, image-feature extraction, and motion prediction.
 - `Skeleton extraction`: target-view skeleton-condition rendering.

@@ -10,7 +10,7 @@
 
 ## News
 
-- **2026-09-02**: Achieved a **5.58×** denoising speedup over the base model using the Wan2.2 5B Turbo LoRA. See [Inference performance](docs/inference_performance.md) for details.
+- **2026-09-02**: Released **4DAnyone-Turbo**, achieving a **5.58×** denoising speedup over the base 4DAnyone model. See [Inference performance](docs/inference_performance.md) for details.
 - **2026-08-28**: Achieved a **1.42×** end-to-end speedup for the complete 24-view generation pipeline.
 - **2026-08-28**: Reduced peak GPU memory to **25.4 GiB** while slightly improving speed.
 
@@ -35,6 +35,8 @@ python scripts/download_example.py
 ```
 
 ## Inference
+
+This release provides two models: **4DAnyone-Base**, corresponding to the original model described in the paper, and **4DAnyone-Turbo**, the default accelerated model. Set `--enable_turbo=False` to use **4DAnyone-Base**.
 
 4DAnyone supports flexible target-view counts, pitch layers, and yaw coverage. Here are several common camera configurations:
 
@@ -95,7 +97,7 @@ Run `python inference.py --help` for the full list.
 - `start_yaw`: horizontal angle of the first view, in degrees. Yaw `0` is the front view.
 - `yaw_span`: horizontal range covered by each camera layer, in degrees.
 - `gpu_ids`: GPU IDs used for parallel pose/VAE view stages and target denoising. Defaults to all visible GPUs.
-- `enable_turbo`: enable the Wan2.2 5B Turbo LoRA. Defaults to `True`; set it to `False` to use the base model.
+- `enable_turbo`: whether to use 4DAnyone-Turbo. Enabled by default.
 
 ### Output
 
@@ -142,7 +144,7 @@ See the [nerfstudio guide](docs/nerfstudio.md) for details.
 ### Inference Acceleration
 
 - [x] Achieve up to 1.42× end-to-end speedup by parallelizing pose encoding and VAE processing across GPUs.
-- [x] Accelerate inference with the Wan2.2 5B Turbo LoRA.
+- [x] Accelerate denoising with 4DAnyone-Turbo.
 
 ### Reconstruction
 
