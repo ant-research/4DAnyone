@@ -300,6 +300,11 @@ class DiTBlock(nn.Module):
 
     def _feed_forward(self, x: torch.Tensor) -> torch.Tensor:
         hidden = self.ffn[0](x)
+        # ``x`` is the owned BF16 modulation result, not the block residual.
+        # Release it after the first projection so the allocator can reuse its
+        # token slab for the equally shaped second-projection output.
+        if not torch.is_grad_enabled():
+            del x
         hidden = gelu_tanh(hidden)
         return self.ffn[2](hidden)
 
