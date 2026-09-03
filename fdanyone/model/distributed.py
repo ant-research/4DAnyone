@@ -250,7 +250,7 @@ def _load_worker_state(rank: int, request: DistributedDenoiseRequest, denoiser: 
         pose_feature_batch=torch.empty(
             (group_size, *request.pose_feature_shape[1:]),
             dtype=denoiser.dtype,
-            device=device,
+            device="cpu",
         ),
         latent_tail=tuple(payload["initial_latents"].shape[1:]),
     )

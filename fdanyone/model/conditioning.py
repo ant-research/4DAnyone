@@ -157,7 +157,7 @@ class PoseFeatureBank:
         return int(self.null_features.shape[0])
 
     def allocate_group(self, size: int, device: str) -> Tensor:
-        """Allocate one reusable GPU group buffer."""
+        """Allocate one reusable group buffer on the requested device."""
 
         import torch
 

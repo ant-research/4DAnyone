@@ -45,6 +45,14 @@ NORM_EPSILON = 1e-6
 # gives the same one-view production chunk as the original 768 MiB
 # single-allocation limit, while naming the actual temporary budget.
 ROPE_TEMPORARY_BUDGET_BYTES = 1536 * 1024**2
+# RMSNorm keeps its FP32 input alive while materializing either the squared
+# values or normalized result. Bound those two full-width temporaries without
+# changing the reduction dimension or arithmetic used by the checkpoint.
+RMS_NORM_FP32_TEMPORARY_BUDGET_BYTES = 1536 * 1024**2
+# CUDA autocast keeps LayerNorm and the following modulation in FP32 until a
+# linear consumes them as BF16. Bound the three coexisting FP32 tensors while
+# preserving that final cast boundary.
+NORM_MODULATION_FP32_TEMPORARY_BUDGET_BYTES = 1536 * 1024**2
 ATTENTION_BACKEND_PRIORITY = ("flash_attn_3", "sageattention", "sdpa")
 
 
@@ -80,6 +88,48 @@ def attention(q: torch.Tensor, k: torch.Tensor, v: torch.Tensor, num_heads: int)
 
 def modulate(x: torch.Tensor, shift: torch.Tensor, scale: torch.Tensor) -> torch.Tensor:
     return x * (1 + scale) + shift
+
+
+def _normalized_modulation_chunk(
+    norm: nn.Module,
+    x: torch.Tensor,
+    shift: torch.Tensor,
+    scale: torch.Tensor,
+    output: torch.Tensor,
+) -> None:
+    """Finish one FP32 normalization/modulation slice in a local scope."""
+
+    output.copy_(modulate(norm(x), shift, scale))
+
+
+def normalized_modulation(
+    norm: nn.Module,
+    x: torch.Tensor,
+    shift: torch.Tensor,
+    scale: torch.Tensor,
+) -> torch.Tensor:
+    """Apply LayerNorm modulation with bounded inference temporaries."""
+
+    if torch.is_grad_enabled():
+        return modulate(norm(x), shift, scale)
+
+    output = torch.empty_like(x)
+    fp32_bytes_per_batch = x[0].numel() * torch.empty((), dtype=torch.float32).element_size()
+    temporary_bytes_per_batch = 3 * fp32_bytes_per_batch
+    batch_chunk = max(
+        1,
+        min(x.shape[0], NORM_MODULATION_FP32_TEMPORARY_BUDGET_BYTES // temporary_bytes_per_batch),
+    )
+    for start in range(0, x.shape[0], batch_chunk):
+        end = start + batch_chunk
+        _normalized_modulation_chunk(
+            norm,
+            x[start:end],
+            shift[start:end],
+            scale[start:end],
+            output[start:end],
+        )
+    return output
 
 
 def sinusoidal_embedding_1d(dim: int, position: torch.Tensor) -> torch.Tensor:
@@ -164,6 +214,30 @@ class RMSNorm(nn.Module):
         dtype = x.dtype
         return self._normalize_float(x.float()).to(dtype) * self.weight
 
+    def _normalize_chunk_inplace(self, chunk: torch.Tensor) -> None:
+        """Normalize one projection slice and end its temporary lifetime here."""
+
+        chunk.copy_(self.forward(chunk))
+
+    def forward_inplace(self, x: torch.Tensor) -> torch.Tensor:
+        """Normalize an inference-owned projection with bounded FP32 storage."""
+
+        if torch.is_grad_enabled():
+            return self.forward(x)
+        if not x.is_contiguous():
+            raise ValueError("In-place RMSNorm requires a contiguous projection buffer.")
+
+        rows = x.view(-1, x.shape[-1])
+        fp32_bytes_per_row = x.shape[-1] * torch.empty((), dtype=torch.float32).element_size()
+        temporary_bytes_per_row = 2 * fp32_bytes_per_row
+        rows_per_chunk = max(
+            1,
+            min(rows.shape[0], RMS_NORM_FP32_TEMPORARY_BUDGET_BYTES // temporary_bytes_per_row),
+        )
+        for start in range(0, rows.shape[0], rows_per_chunk):
+            self._normalize_chunk_inplace(rows[start : start + rows_per_chunk])
+        return x
+
 
 class SelfAttention(nn.Module):
     def __init__(self, dim: int, num_heads: int, eps: float = NORM_EPSILON) -> None:
@@ -177,8 +251,8 @@ class SelfAttention(nn.Module):
         self.norm_k = RMSNorm(dim, eps=eps)
 
     def forward(self, x: torch.Tensor, freqs: torch.Tensor) -> torch.Tensor:
-        q = self.norm_q(self.q(x))
-        k = self.norm_k(self.k(x))
+        q = self.norm_q.forward_inplace(self.q(x))
+        k = self.norm_k.forward_inplace(self.k(x))
         v = self.v(x)
         q = rope_apply(q, freqs, self.num_heads)
         k = rope_apply(k, freqs, self.num_heads)
@@ -197,8 +271,8 @@ class CrossAttention(nn.Module):
         self.norm_k = RMSNorm(dim, eps=eps)
 
     def forward(self, x: torch.Tensor, context: torch.Tensor) -> torch.Tensor:
-        q = self.norm_q(self.q(x))
-        k = self.norm_k(self.k(context))
+        q = self.norm_q.forward_inplace(self.q(x))
+        k = self.norm_k.forward_inplace(self.k(context))
         v = self.v(context)
         return self.o(attention(q, k, v, self.num_heads))
 
@@ -239,7 +313,7 @@ class DiTBlock(nn.Module):
     ) -> torch.Tensor:
         views, frames, height, width = shape
         x = rearrange(
-            modulate(self.norm1_mvs(x), shift, scale),
+            normalized_modulation(self.norm1_mvs, x, shift, scale),
             "v (f h w) c -> f (v h w) c",
             v=views,
             f=frames,
@@ -269,7 +343,10 @@ class DiTBlock(nn.Module):
             self.modulation.to(dtype=time_modulation.dtype, device=time_modulation.device) + time_modulation
         ).chunk(6, dim=1)
 
-        x = x + gate_msa * self.self_attn(modulate(self.norm1(x), shift_msa, scale_msa), spatial_freqs)
+        x = x + gate_msa * self.self_attn(
+            normalized_modulation(self.norm1, x, shift_msa, scale_msa),
+            spatial_freqs,
+        )
 
         shift_mvs, scale_mvs, gate_mvs = (
             self.modulation_mvs.to(dtype=time_modulation.dtype, device=time_modulation.device)
@@ -285,7 +362,7 @@ class DiTBlock(nn.Module):
 
         x = x + self.cross_attn(self.norm3(x), repeat(context, "1 l c -> v l c", v=x.shape[0]))
 
-        residual = self._feed_forward(modulate(self.norm2(x), shift_mlp, scale_mlp))
+        residual = self._feed_forward(normalized_modulation(self.norm2, x, shift_mlp, scale_mlp))
         return x + gate_mlp * residual
 
 
@@ -458,6 +535,26 @@ class FourDAnyoneDiT(nn.Module):
         return x, packed_views
 
     @staticmethod
+    def _add_target_pose_features_streamed(
+        x: torch.Tensor,
+        pose_features: torch.Tensor,
+        target_views: int,
+        grid_size: tuple[int, int, int],
+    ) -> None:
+        """Stage one CPU pose feature at a time into patch-token storage."""
+
+        frames, height, width = grid_size
+        staging = torch.empty(
+            (MODEL_DIM, frames, height, width),
+            dtype=x.dtype,
+            device=x.device,
+        )
+        for view_index in range(target_views):
+            staging.copy_(pose_features[view_index])
+            pose_tokens = rearrange(staging, "c f h w -> (f h w) c")
+            x[view_index].add_(pose_tokens)
+
+    @staticmethod
     def _add_pose_features(
         x: torch.Tensor,
         pose_features: torch.Tensor,
@@ -473,11 +570,24 @@ class FourDAnyoneDiT(nn.Module):
             raise ValueError(f"Expected pose features {expected_pose}, got {tuple(pose_features.shape)}.")
         if tuple(null_pose_feature.shape) != expected_null:
             raise ValueError(f"Expected null pose features {expected_null}, got {tuple(null_pose_feature.shape)}.")
-        pose_tokens = rearrange(pose_features, "v c f h w -> v (f h w) c")
         null_tokens = rearrange(null_pose_feature, "v c f h w -> v (f h w) c")
         if torch.is_grad_enabled():
+            if pose_features.device != x.device:
+                raise ValueError("Training requires pose features on the same device as patch tokens.")
+            pose_tokens = rearrange(pose_features, "v c f h w -> v (f h w) c")
             return torch.cat([x[:target_views] + pose_tokens, x[target_views:] + null_tokens], dim=0)
-        x[:target_views].add_(pose_tokens)
+        if pose_features.device == x.device:
+            pose_tokens = rearrange(pose_features, "v c f h w -> v (f h w) c")
+            x[:target_views].add_(pose_tokens)
+        else:
+            if pose_features.device.type != "cpu":
+                raise ValueError(f"Inference pose features must be on CPU or {x.device}, got {pose_features.device}.")
+            FourDAnyoneDiT._add_target_pose_features_streamed(
+                x,
+                pose_features,
+                target_views,
+                grid_size,
+            )
         x[target_views:].add_(null_tokens)
         return x
 

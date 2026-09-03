@@ -36,7 +36,7 @@ python scripts/download_example.py
 
 ## Inference
 
-This release provides two models: **4DAnyone-Base**, corresponding to the original model described in the paper, and **4DAnyone-Turbo**, the default accelerated model. Set `--enable_turbo=False` to use **4DAnyone-Base**.
+We provide two models: **4DAnyone-Turbo** for faster four-step denoising and **4DAnyone-Base** with the standard denoising schedule. Both models achieve comparable generation quality. 4DAnyone-Turbo is enabled by default. Set `--enable_turbo=False` to use 4DAnyone-Base.
 
 4DAnyone supports flexible target-view counts, pitch layers, and yaw coverage. Here are several common camera configurations:
 

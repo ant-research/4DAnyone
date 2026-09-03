@@ -181,7 +181,10 @@ def _denoise_rcp(
     )
     source = src_latents.to(dtype=denoiser.dtype, device=device)
     context = context.to(dtype=denoiser.dtype, device=device)
-    pose_feature_batch = pose_features.allocate_group(len(camera_ids), device)
+    # Keep the reusable group on the host. The DiT stages one feature at a
+    # time while patch tokens are built, then releases that device scratch
+    # before the transformer blocks reach their peak allocation.
+    pose_feature_batch = pose_features.allocate_group(len(camera_ids), "cpu")
     pose_features.copy_group(tuple(range(len(camera_ids))), pose_feature_batch)
     null_pose_feature = pose_features.null_on(device)
 
@@ -229,7 +232,7 @@ def _denoise_targets_single(
     context = context.to(dtype=denoiser.dtype, device=device)
     null_pose_feature = pose_features.null_on(device)
     group_size = len(routes[0][0])
-    pose_feature_batch = pose_features.allocate_group(group_size, device)
+    pose_feature_batch = pose_features.allocate_group(group_size, "cpu")
 
     with torch.inference_mode(), _bf16_autocast():
         for step_index, groups in enumerate(tqdm(routes, desc=f"Generate {num_views} target views")):
