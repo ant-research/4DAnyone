@@ -73,7 +73,7 @@ Example 3DGS reconstruction in the Nerfstudio viewer:
 
 ![Example 3DGS reconstruction in the Nerfstudio viewer](assets/nerfstudio-example.jpg)
 
-> [!NOTE]
+> [!note]
 > This guide reconstructs a static 3DGS from a single synchronized timestamp and cannot reproduce the 4DGS results shown in our work.
 >
 > The FreeTimeGS implementation used in the paper is not publicly available. We are evaluating open-source alternatives for a reproducible 4DGS pipeline.

@@ -8,11 +8,19 @@
 
 <p align="center">4DAnyone turns a casual monocular video into multi-view videos, enabling downstream 4DGS reconstruction.</p>
 
+> [!note]
+> 4DAnyone is a multi-view video model that:
+>
+> - generates dozens of synchronized, view-consistent videos from a single monocular video.
+> - requires **22 GB** of peak CUDA memory, enabling inference on consumer GPUs.
+> - generates a 121-frame video in **27 seconds** on a single RTX 4090.
+
 ## News
 
-- **2026-09-02**: Released **4DAnyone-Turbo**, achieving a **5.58×** denoising speedup over the base 4DAnyone model. See [Inference performance](docs/inference_performance.md) for details.
+- **2026-09-05**: Reduced peak GPU memory below **24 GB**, enabling inference on consumer GPUs (RTX 4090).
+- **2026-09-02**: Released **4DAnyone-Turbo**, achieving a **5.58×** denoising speedup over 4DAnyone-Base.
 - **2026-08-28**: Achieved a **1.42×** end-to-end speedup for the complete 24-view generation pipeline.
-- **2026-08-28**: Reduced peak GPU memory to **25.4 GiB** while slightly improving speed.
+- **2026-08-28**: Reduced peak GPU memory below **32 GB** while slightly improving speed.
 
 ## Installation
 
@@ -26,6 +34,8 @@ conda activate 4danyone
 pip install -r requirements.txt
 ```
 
+For faster inference, optionally install [FlashAttention-3](https://github.com/Dao-AILab/flash-attention/tree/main/hopper) or [SageAttention](https://github.com/thu-ml/SageAttention). The installed backend is enabled automatically.
+
 Missing models and examples are downloaded automatically on first use. You can also download them manually:
 
 ```bash
@@ -36,7 +46,7 @@ python scripts/download_example.py
 
 ## Inference
 
-We provide two models: **4DAnyone-Turbo** for faster four-step denoising and **4DAnyone-Base** with the standard denoising schedule. Both models achieve comparable generation quality. 4DAnyone-Turbo is enabled by default. Set `--enable_turbo=False` to use 4DAnyone-Base.
+This repository provides two models: **4DAnyone-Base** with the standard denoising schedule and the distilled **4DAnyone-Turbo** for faster four-step denoising. 4DAnyone-Turbo is enabled by default for faster inference while maintaining generation quality comparable to 4DAnyone-Base. See [Inference performance](docs/inference_performance.md) for GPU memory, inference speed, and generation quality benchmarks.
 
 4DAnyone supports flexible target-view counts, pitch layers, and yaw coverage. Here are several common camera configurations:
 
@@ -115,21 +125,13 @@ data/
         └── dense/00.mp4 ... <N-1>.mp4       # generated target views
 ```
 
-### Inference Efficiency
-
-For faster inference on supported GPUs, optionally install [FlashAttention-3](https://github.com/Dao-AILab/flash-attention/tree/main/hopper) or [SageAttention](https://github.com/thu-ml/SageAttention). Runtime selection follows one fixed order: FlashAttention-3, SageAttention, then PyTorch SDPA.
-
-See [Inference performance](docs/inference_performance.md) for measured 6-view runtimes and peak GPU memory usage on H20-3E, H200, RTX 5880 Ada, and RTX A6000 GPUs.
-
 ### Custom Data
 
-Use an input video that:
+Use an input video with:
 
-- is 720p or higher, with 1080p recommended.
-- uses a 9:16 portrait aspect ratio.
-- shows one person in a full-body or upper-body shot.
-- has at least 121 frames.
-- contains only mild camera motion.
+- a single person in a full-body or upper-body shot.
+- no large camera movements, clear footage.
+- 1080p or higher, 9:16 portrait aspect ratio, at least 121 frames.
 
 ## 3DGS Reconstruction
 
@@ -139,12 +141,13 @@ See the [nerfstudio guide](docs/nerfstudio.md) for details.
 
 ### Peak Memory Optimization
 
-- [x] Reduce peak GPU memory below 32 GB through pose precomputation and memory-efficient operators.
+- [x] Reduce peak GPU memory below 32 GB.
+- [x] Further reduce peak GPU memory below 24 GB.
 
 ### Inference Acceleration
 
-- [x] Achieve up to 1.42× end-to-end speedup by parallelizing pose encoding and VAE processing across GPUs.
-- [x] Achieve a **5.58×** denoising speedup with 4DAnyone-Turbo.
+- [x] Optimize inference speed through multi-GPU parallelism.
+- [x] Accelerate inference via few-step model distillation.
 
 ### Reconstruction
 
