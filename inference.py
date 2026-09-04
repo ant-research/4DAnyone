@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import sys
 
-from fdanyone.device import configure_inference_cuda_allocator
+from fdanyone.device import configure_inference_cuda_allocator, selected_gpus_need_expandable_segments
 from fdanyone.errors import FourDAnyoneError
 
 
@@ -63,7 +63,9 @@ def inference(
 
     # This must run before the first model/PyTorch import. It protects the
     # reusable 5--6 GiB DiT FFN allocation from allocator fragmentation.
-    configure_inference_cuda_allocator()
+    configure_inference_cuda_allocator(
+        use_expandable_segments=selected_gpus_need_expandable_segments(gpu_ids),
+    )
     # Keep model imports out of module scope so ``--help`` stays lightweight.
     from fdanyone.pipeline import run_pipeline
 

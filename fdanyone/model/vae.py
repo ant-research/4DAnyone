@@ -167,7 +167,6 @@ class VaeExecutor:
                 raise
             finally:
                 model.to("cpu")
-                torch.cuda.empty_cache()
 
         with ThreadPoolExecutor(max_workers=worker_count, thread_name_prefix="vae") as pool:
             futures = [pool.submit(run, worker_index) for worker_index in range(worker_count)]
@@ -179,6 +178,12 @@ class VaeExecutor:
                 for future in futures:
                     future.cancel()
                 raise
+        # Do not let a completed worker release cached mappings while a peer is
+        # still executing.  This raced with expandable segments in low-memory
+        # multi-GPU inference.  Join every worker before serial cache cleanup.
+        for worker_index in range(worker_count):
+            torch.cuda.set_device(int(self.devices[worker_index].removeprefix("cuda:")))
+            torch.cuda.empty_cache()
         self.last_peak_vram_bytes = peaks
 
     @staticmethod
