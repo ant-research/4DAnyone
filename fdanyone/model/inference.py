@@ -67,6 +67,7 @@ class GeneratedViews:
     denoising_profile: DenoisingProfile
     seed: int
     device: str
+    attention_backend: str
     elapsed_seconds: dict[str, float]
     stage_peak_vram_bytes: dict[str, dict[str, int]]
     peak_vram_allocated_bytes: int
@@ -376,6 +377,7 @@ def _denoise_targets_multi_gpu(
     checkpoint_path: str | Path,
     turbo_lora_path: str | Path | None,
     denoising_profile: DenoisingProfile,
+    attention_backend: str,
     plan: _GenerationPlan,
     target_sources: Tensor,
     context: Tensor,
@@ -389,6 +391,7 @@ def _denoise_targets_multi_gpu(
             checkpoint_path=checkpoint_path,
             turbo_lora_path=turbo_lora_path,
             denoising_profile=denoising_profile,
+            attention_backend=attention_backend,
             src_latents=target_sources,
             context=context,
             initial_latents=initial_latents,
@@ -414,12 +417,13 @@ def generate_views(
     checkpoint_path: str | Path,
     turbo_lora_path: str | Path | None,
     denoising_profile: DenoisingProfile,
+    attention_backend: str,
     assets: BaseAssets,
     output_dir: str | Path,
     devices: tuple[str, ...],
     seed: int,
 ) -> GeneratedViews:
-    """Generate the proposal (when enabled) and the requested target views."""
+    """Generate proposal and target views with the pipeline's resolved backend."""
 
     if seed < 0:
         raise FourDAnyoneError(f"seed must be non-negative, got {seed}.")
@@ -448,6 +452,7 @@ def generate_views(
                 checkpoint_path=checkpoint_path,
                 turbo_lora_path=turbo_lora_path,
                 profile=denoising_profile,
+                attention_backend=attention_backend,
             )
             if plan.needs_primary_denoiser
             else None
@@ -503,6 +508,7 @@ def generate_views(
                     checkpoint_path=checkpoint_path,
                     turbo_lora_path=turbo_lora_path,
                     denoising_profile=denoising_profile,
+                    attention_backend=attention_backend,
                     plan=plan,
                     target_sources=target_sources,
                     context=context,
@@ -549,6 +555,7 @@ def generate_views(
             denoising_profile=denoising_profile,
             seed=seed,
             device=plan.primary_device,
+            attention_backend=attention_backend,
             elapsed_seconds=metrics.elapsed_seconds,
             stage_peak_vram_bytes=metrics.stage_peak_vram_bytes,
             peak_vram_allocated_bytes=metrics.peak_vram_allocated_bytes,

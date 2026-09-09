@@ -16,6 +16,8 @@ import torch.nn as nn
 import torch.nn.functional as F
 from einops import rearrange, repeat
 
+from fdanyone.attention import resolve_attention_backend
+
 try:
     import flash_attn_interface
 
@@ -53,24 +55,22 @@ RMS_NORM_FP32_TEMPORARY_BUDGET_BYTES = 1536 * 1024**2
 # linear consumes them as BF16. Bound the three coexisting FP32 tensors while
 # preserving that final cast boundary.
 NORM_MODULATION_FP32_TEMPORARY_BUDGET_BYTES = 1536 * 1024**2
-ATTENTION_BACKEND_PRIORITY = ("flash_attn_3", "sageattention", "sdpa")
 
 
-def get_attention_backend() -> str:
-    """Return the implementation selected by the release auto policy."""
+def get_attention_backend(backend: str = "auto") -> str:
+    """Resolve a requested backend against the installed implementations."""
 
     availability = {
         "flash_attn_3": FLASH_ATTN_3_AVAILABLE,
         "sageattention": SAGE_ATTN_AVAILABLE,
         "sdpa": True,
     }
-    return next(backend for backend in ATTENTION_BACKEND_PRIORITY if availability[backend])
+    return resolve_attention_backend(backend, availability)
 
 
-def attention(q: torch.Tensor, k: torch.Tensor, v: torch.Tensor, num_heads: int) -> torch.Tensor:
-    """Evaluate attention with the backend selected by the release policy."""
+def attention(q: torch.Tensor, k: torch.Tensor, v: torch.Tensor, num_heads: int, backend: str) -> torch.Tensor:
+    """Evaluate attention with the owning model's resolved backend."""
 
-    backend = get_attention_backend()
     if backend == "flash_attn_3":
         q = rearrange(q, "b s (n d) -> b s n d", n=num_heads)
         k = rearrange(k, "b s (n d) -> b s n d", n=num_heads)
@@ -240,9 +240,10 @@ class RMSNorm(nn.Module):
 
 
 class SelfAttention(nn.Module):
-    def __init__(self, dim: int, num_heads: int, eps: float = NORM_EPSILON) -> None:
+    def __init__(self, dim: int, num_heads: int, *, attention_backend: str, eps: float = NORM_EPSILON) -> None:
         super().__init__()
         self.num_heads = num_heads
+        self.attention_backend = attention_backend
         self.q = nn.Linear(dim, dim)
         self.k = nn.Linear(dim, dim)
         self.v = nn.Linear(dim, dim)
@@ -256,13 +257,14 @@ class SelfAttention(nn.Module):
         v = self.v(x)
         q = rope_apply(q, freqs, self.num_heads)
         k = rope_apply(k, freqs, self.num_heads)
-        return self.o(attention(q, k, v, self.num_heads))
+        return self.o(attention(q, k, v, self.num_heads, self.attention_backend))
 
 
 class CrossAttention(nn.Module):
-    def __init__(self, dim: int, num_heads: int, eps: float = NORM_EPSILON) -> None:
+    def __init__(self, dim: int, num_heads: int, *, attention_backend: str, eps: float = NORM_EPSILON) -> None:
         super().__init__()
         self.num_heads = num_heads
+        self.attention_backend = attention_backend
         self.q = nn.Linear(dim, dim)
         self.k = nn.Linear(dim, dim)
         self.v = nn.Linear(dim, dim)
@@ -274,16 +276,16 @@ class CrossAttention(nn.Module):
         q = self.norm_q.forward_inplace(self.q(x))
         k = self.norm_k.forward_inplace(self.k(context))
         v = self.v(context)
-        return self.o(attention(q, k, v, self.num_heads))
+        return self.o(attention(q, k, v, self.num_heads, self.attention_backend))
 
 
 class DiTBlock(nn.Module):
     """One frozen video + multiview + prompt + FFN transformer block."""
 
-    def __init__(self) -> None:
+    def __init__(self, *, attention_backend: str) -> None:
         super().__init__()
-        self.self_attn = SelfAttention(MODEL_DIM, NUM_HEADS)
-        self.cross_attn = CrossAttention(MODEL_DIM, NUM_HEADS)
+        self.self_attn = SelfAttention(MODEL_DIM, NUM_HEADS, attention_backend=attention_backend)
+        self.cross_attn = CrossAttention(MODEL_DIM, NUM_HEADS, attention_backend=attention_backend)
         self.norm1 = nn.LayerNorm(MODEL_DIM, eps=NORM_EPSILON, elementwise_affine=False)
         self.norm2 = nn.LayerNorm(MODEL_DIM, eps=NORM_EPSILON, elementwise_affine=False)
         self.norm3 = nn.LayerNorm(MODEL_DIM, eps=NORM_EPSILON)
@@ -296,7 +298,7 @@ class DiTBlock(nn.Module):
 
         self.modulation_mvs = nn.Parameter(torch.randn(1, 3, MODEL_DIM) / MODEL_DIM**0.5)
         self.norm1_mvs = nn.LayerNorm(MODEL_DIM, eps=NORM_EPSILON, elementwise_affine=False)
-        self.self_attn_mvs = SelfAttention(MODEL_DIM, NUM_HEADS)
+        self.self_attn_mvs = SelfAttention(MODEL_DIM, NUM_HEADS, attention_backend=attention_backend)
 
     def _feed_forward(self, x: torch.Tensor) -> torch.Tensor:
         hidden = self.ffn[0](x)
@@ -424,8 +426,9 @@ class ViewPackEmbedding(nn.Module):
 class FourDAnyoneDiT(nn.Module):
     """Exact immutable inference graph for the released model checkpoint."""
 
-    def __init__(self) -> None:
+    def __init__(self, *, attention_backend: str = "auto") -> None:
         super().__init__()
+        self.attention_backend = get_attention_backend(attention_backend)
         self.patch_embedding = nn.Conv3d(
             LATENT_CHANNELS,
             MODEL_DIM,
@@ -443,7 +446,7 @@ class FourDAnyoneDiT(nn.Module):
             nn.Linear(MODEL_DIM, MODEL_DIM),
         )
         self.time_projection = nn.Sequential(nn.SiLU(), nn.Linear(MODEL_DIM, MODEL_DIM * 6))
-        self.blocks = nn.ModuleList(DiTBlock() for _ in range(NUM_LAYERS))
+        self.blocks = nn.ModuleList(DiTBlock(attention_backend=self.attention_backend) for _ in range(NUM_LAYERS))
         self.head = Head()
         self.viewpack_embedding = ViewPackEmbedding()
         self.freqs: tuple[torch.Tensor, torch.Tensor, torch.Tensor] = ()

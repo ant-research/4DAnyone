@@ -182,6 +182,7 @@ def run_pipeline(
     mhr70_regressor_path: str | None,
     gvhmr_root: str,
     gpu_ids: list[int] | None,
+    attention_backend: str,
     start_time: float,
     target_fps: str | int | float,
     seed: int,
@@ -223,6 +224,13 @@ def run_pipeline(
     validate_required_video_codecs()
     devices = select_cuda_devices(gpu_ids)
     device = devices[0]
+
+    from fdanyone.vendor.diffsynth.models.wan_video_dit import get_attention_backend
+
+    # Resolve once, before downloading assets or preparing conditioning. Every
+    # DiT, including spawned replicas, receives this concrete backend.
+    attention_backend = get_attention_backend(attention_backend)
+    LOGGER.info("Using attention backend: %s", attention_backend)
 
     ensure_example_video(video_path)
     # Resolve the licensed body model before starting the much larger public
@@ -323,6 +331,7 @@ def run_pipeline(
                 checkpoint_path=checkpoint,
                 turbo_lora_path=turbo_lora,
                 denoising_profile=denoising_profile,
+                attention_backend=attention_backend,
                 assets=base_assets,
                 output_dir=scratch / "generation",
                 devices=devices,

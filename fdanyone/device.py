@@ -10,7 +10,7 @@ from fdanyone.errors import ConfigurationError
 
 CUDA_ALLOCATOR_CONF = "PYTORCH_CUDA_ALLOC_CONF"
 CUDA_MAX_SPLIT_SIZE_MB = 4096
-CUDA_EXPANDABLE_SEGMENT_MAX_MEMORY_BYTES = 24 * 1024**3
+LOW_MEMORY_GPU_MAX_BYTES = 24 * 1024**3
 
 
 def _visible_gpu_identifiers(environment: MutableMapping[str, str]) -> tuple[str, ...] | None:
@@ -66,7 +66,7 @@ def _query_total_memory_bytes(identifiers: tuple[str, ...] | None) -> tuple[int,
     return tuple(total_mib * 1024**2 for total_mib in totals_mib)
 
 
-def selected_gpus_need_expandable_segments(
+def has_low_memory_gpu(
     gpu_ids: Sequence[int] | None,
     environment: MutableMapping[str, str] | None = None,
 ) -> bool:
@@ -75,7 +75,7 @@ def selected_gpus_need_expandable_segments(
     environment = os.environ if environment is None else environment
     identifiers = _selected_gpu_identifiers(gpu_ids, environment)
     totals = _query_total_memory_bytes(identifiers)
-    return bool(totals) and any(total <= CUDA_EXPANDABLE_SEGMENT_MAX_MEMORY_BYTES for total in totals)
+    return any(total <= LOW_MEMORY_GPU_MAX_BYTES for total in totals)
 
 
 def configure_inference_cuda_allocator(

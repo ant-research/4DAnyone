@@ -4,7 +4,8 @@ from __future__ import annotations
 
 import sys
 
-from fdanyone.device import configure_inference_cuda_allocator, selected_gpus_need_expandable_segments
+from fdanyone.attention import validate_attention_backend
+from fdanyone.device import configure_inference_cuda_allocator, has_low_memory_gpu
 from fdanyone.errors import FourDAnyoneError
 
 
@@ -24,6 +25,7 @@ def inference(
     mhr70_regressor_path: str | None = None,
     gvhmr_root: str = "third_party/GVHMR",
     gpu_ids: list[int] | None = None,
+    attention_backend: str = "auto",
     target_fps: str | int | float = "auto",
     start_time: float = 0.0,
     seed: int = 42,
@@ -55,6 +57,9 @@ def inference(
         gvhmr_root: Path to the GVHMR source checkout.
         gpu_ids: GPU IDs used for parallel pose/VAE view stages and target
             denoising. Omit to use all visible GPUs.
+        attention_backend: auto uses SDPA when any selected GPU has at most
+            24 GiB; otherwise it prefers FlashAttention-3, then SageAttention,
+            then SDPA. Override with sdpa, sageattention, or flash_attn_3.
         target_fps: auto preserves the input clock unless it divides evenly
             to 24, 25, or 30 FPS; a positive number requests an explicit FPS.
         start_time: Clip start time on the input timeline, in seconds.
@@ -63,9 +68,11 @@ def inference(
 
     # This must run before the first model/PyTorch import. It protects the
     # reusable 5--6 GiB DiT FFN allocation from allocator fragmentation.
-    configure_inference_cuda_allocator(
-        use_expandable_segments=selected_gpus_need_expandable_segments(gpu_ids),
-    )
+    validate_attention_backend(attention_backend)
+    low_memory = has_low_memory_gpu(gpu_ids)
+    configure_inference_cuda_allocator(use_expandable_segments=low_memory)
+    if attention_backend == "auto" and low_memory:
+        attention_backend = "sdpa"
     # Keep model imports out of module scope so ``--help`` stays lightweight.
     from fdanyone.pipeline import run_pipeline
 
@@ -85,6 +92,7 @@ def inference(
         mhr70_regressor_path=mhr70_regressor_path,
         gvhmr_root=gvhmr_root,
         gpu_ids=gpu_ids,
+        attention_backend=attention_backend,
         target_fps=target_fps,
         start_time=start_time,
         seed=seed,

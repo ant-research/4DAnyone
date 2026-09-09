@@ -51,6 +51,7 @@ class DistributedDenoiseRequest:
     checkpoint_path: str
     turbo_lora_path: str | None
     denoising_profile: DenoisingProfile
+    attention_backend: str
     routes: Routes
     devices: tuple[str, ...]
     work_dir: str
@@ -276,7 +277,6 @@ def _worker(rank: int, request: DistributedDenoiseRequest) -> None:
     import torch.distributed as dist
 
     from fdanyone.model.loader import load_denoiser
-    from fdanyone.vendor.diffsynth.models.wan_video_dit import get_attention_backend
 
     logging.basicConfig(
         level=logging.INFO,
@@ -289,13 +289,13 @@ def _worker(rank: int, request: DistributedDenoiseRequest) -> None:
     device_index = int(device.removeprefix("cuda:"))
     torch.cuda.set_device(device_index)
     torch.cuda.reset_peak_memory_stats(device_index)
-    resolved_backend = get_attention_backend()
 
     model_started = time.monotonic()
     denoiser = load_denoiser(
         checkpoint_path=request.checkpoint_path,
         turbo_lora_path=request.turbo_lora_path,
         profile=request.denoising_profile,
+        attention_backend=request.attention_backend,
     )
     denoiser.prepare_on_device(device)
     torch.cuda.synchronize(device_index)
@@ -320,7 +320,7 @@ def _worker(rank: int, request: DistributedDenoiseRequest) -> None:
             "rank": rank,
             "device": device,
             "device_name": torch.cuda.get_device_name(device_index),
-            "attention_backend": resolved_backend,
+            "attention_backend": denoiser.model.attention_backend,
             "model_load_seconds": model_load_seconds,
             "denoise_seconds": denoise_seconds,
             "peak_vram_allocated_bytes": int(torch.cuda.max_memory_allocated(device_index)),
@@ -338,6 +338,7 @@ def denoise_targets_distributed(
     checkpoint_path: str | Path,
     turbo_lora_path: str | Path | None,
     denoising_profile: DenoisingProfile,
+    attention_backend: str,
     routes: Routes,
     src_latents: Tensor,
     context: Tensor,
@@ -382,6 +383,7 @@ def denoise_targets_distributed(
         checkpoint_path=str(Path(checkpoint_path).expanduser().resolve()),
         turbo_lora_path=(None if turbo_lora_path is None else str(Path(turbo_lora_path).expanduser().resolve())),
         denoising_profile=denoising_profile,
+        attention_backend=attention_backend,
         routes=routes,
         devices=devices,
         work_dir=str(root),

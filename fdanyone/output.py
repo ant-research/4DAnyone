@@ -112,10 +112,8 @@ def export_result(
 ) -> dict:
     """Publish proposal, target, skeleton, camera, and metadata artifacts."""
 
-    from fdanyone.vendor.diffsynth.models.wan_video_dit import get_attention_backend
-
     root = Path(destination).expanduser().resolve()
-    attention_backend = get_attention_backend()
+    attention_backend = generated.attention_backend
     view_plan = generated.view_plan
     if conditioning.view_plan != view_plan:
         raise FourDAnyoneError("Conditioning and generation resolved different view plans.")
