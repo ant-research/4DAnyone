@@ -25,7 +25,7 @@ from fdanyone.geometry.cameras import (
     reference_intrinsics,
 )
 from fdanyone.geometry.crop import Crop, center_crop, crop_from_bounds, mask_bounds, transform_intrinsics
-from fdanyone.geometry.framing import analyze_input_framing, solve_sequence_framing
+from fdanyone.geometry.framing import analyze_input_framing, solve_clip_framing
 from fdanyone.io import write_json
 from fdanyone.motion.gvhmr import gvhmr_imports, validate_gvhmr
 from fdanyone.motion.result import MotionResult
@@ -157,8 +157,7 @@ def _video_tensor(path: Path, num_frames: int, *, crop: Crop | None = None):
     return torch.stack(output_frames, dim=1).unsqueeze(0).contiguous()
 
 
-def _safe_regressor_metadata(raw_metadata: object, support_shape: tuple[int, ...]) -> dict[str, int | str]:
-    del raw_metadata
+def _safe_regressor_metadata(support_shape: tuple[int, ...]) -> dict[str, int | str]:
     return {
         "format": "sparse_vertex_regressor",
         "num_keypoints": int(support_shape[0]),
@@ -177,7 +176,7 @@ def _load_regressor(path: Path, device):
         raise AssetError(f"Unexpected MHR70 regressor shapes: support={support.shape}, weights={weights.shape}.")
     if names != KEYPOINT_NAMES:
         raise AssetError("MHR70 regressor keypoint order does not match the frozen Goliath70 schema.")
-    return support, weights, _safe_regressor_metadata(data.get("metadata"), tuple(support.shape))
+    return support, weights, _safe_regressor_metadata(tuple(support.shape))
 
 
 @contextmanager
@@ -379,7 +378,7 @@ def build_skeleton_conditioning(
         )
 
     projection_height, projection_width = _projection_shape(clip.height, clip.width)
-    framing = solve_sequence_framing(
+    framing = solve_clip_framing(
         geometry.keypoints_world,
         KEYPOINT_NAMES,
         input_framing,

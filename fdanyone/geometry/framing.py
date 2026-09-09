@@ -64,7 +64,7 @@ class FocalSolve:
 
 
 @dataclass(frozen=True)
-class SequenceFraming:
+class ClipFraming:
     radius: float
     target_height: float
     focal_normalized: float
@@ -509,19 +509,19 @@ def _cutoff_ratio(points: np.ndarray, cameras: Sequence[Camera], focal: float, p
     return float(np.percentile(positions[np.isfinite(positions)], percentile))
 
 
-def solve_sequence_framing(
+def solve_clip_framing(
     keypoints: np.ndarray,
     names: Sequence[str],
     profile: InputFraming,
     camera_factory: Callable[[float, float], Sequence[Camera]],
     aspect_ratio: float,
     spec: FramingConfig = FRAMING,
-) -> SequenceFraming:
+) -> ClipFraming:
     radius_result = solve_radius(keypoints, names, camera_factory, aspect_ratio, spec)
     applied = profile.confidence >= spec.input_min_confidence
     thresholds = adaptive_thresholds(profile) if applied else None
     if not applied or thresholds is None or thresholds.closeup_strength <= 0:
-        return SequenceFraming(
+        return ClipFraming(
             radius_result.radius,
             spec.reference_target_height,
             spec.reference_focal_normalized,
@@ -565,7 +565,7 @@ def solve_sequence_framing(
             else:
                 upper = midpoint
 
-    return SequenceFraming(
+    return ClipFraming(
         radius_result.radius,
         target,
         value[0].focal_normalized,

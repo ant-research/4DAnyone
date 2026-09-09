@@ -3,18 +3,47 @@
 from __future__ import annotations
 
 import errno
+import fcntl
 import hashlib
 import json
 import os
 import shutil
 import time
 import uuid
-from contextlib import AbstractContextManager
+from contextlib import AbstractContextManager, contextmanager
 from pathlib import Path
 
 from fdanyone.errors import FourDAnyoneError
 
 _RETRYABLE_TREE_ERRORS = {errno.EBUSY, errno.ENOTEMPTY, errno.ESTALE}
+
+
+def resolve_output_path(path: str | Path) -> Path:
+    """Normalize an output path without following a possibly dangling leaf symlink."""
+
+    expanded = Path(path).expanduser()
+    return expanded.parent.resolve() / expanded.name
+
+
+@contextmanager
+def lock_output(path: Path):
+    """Reserve an output through a stable, writable sidecar file.
+
+    Keep the empty lock file outside the output directory and never unlink it: replacing
+    its inode could let concurrent writers acquire different locks. The OS
+    releases the lock on process exit, including SIGKILL.
+    """
+
+    lock_path = path.with_name(f".{path.name}.lock")
+    descriptor = os.open(lock_path, os.O_CREAT | os.O_RDWR | os.O_NOFOLLOW, 0o666)
+    try:
+        try:
+            fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError as exc:
+            raise FourDAnyoneError(f"Another inference run is using {path}.") from exc
+        yield
+    finally:
+        os.close(descriptor)
 
 
 def sha256_file(path: str | Path, *, chunk_size: int = 8 * 1024 * 1024) -> str:
@@ -66,11 +95,7 @@ class AtomicResultDirectory(AbstractContextManager[Path]):
     """Build beside the destination and rename only after all validation passes."""
 
     def __init__(self, destination: str | Path):
-        expanded = Path(destination).expanduser()
-        # Resolve the parent for a stable absolute location, but preserve the
-        # leaf itself so a dangling output symlink cannot be followed and
-        # mistaken for a nonexistent destination.
-        self.destination = expanded.parent.resolve() / expanded.name
+        self.destination = resolve_output_path(destination)
         self.working = self.destination.with_name(f".{self.destination.name}.work-{uuid.uuid4().hex[:10]}")
         self._committed = False
 

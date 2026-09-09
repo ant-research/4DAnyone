@@ -229,6 +229,26 @@ def _decode_frames(
         )
 
 
+def validate_clip_options(
+    *,
+    start_time: float,
+    fps: str | int | float | Fraction | None,
+) -> Fraction | None:
+    """Validate clip options without video I/O and normalize the requested FPS."""
+
+    if not math.isfinite(start_time) or start_time < 0:
+        raise VideoContractError(f"start_time must be non-negative, got {start_time}.")
+    if fps is None:
+        return None
+    try:
+        rate = Fraction(str(fps))
+    except (ValueError, ZeroDivisionError) as exc:
+        raise VideoContractError(f"Cannot parse target fps {fps!r} as a rational frame rate.") from exc
+    if rate <= 0:
+        raise VideoContractError(f"Target fps must be positive, got {rate}.")
+    return rate
+
+
 def decode_canonical_clip(
     video_path: str | Path,
     *,
@@ -243,8 +263,7 @@ def decode_canonical_clip(
         raise VideoContractError(f"Input video does not exist: {path}")
     if num_frames <= 0:
         raise VideoContractError(f"num_frames must be positive, got {num_frames}.")
-    if not math.isfinite(start_time) or start_time < 0:
-        raise VideoContractError(f"start_time must be non-negative, got {start_time}.")
+    fps = validate_clip_options(start_time=start_time, fps=fps)
 
     source_stat = path.stat()
 
@@ -253,12 +272,7 @@ def decode_canonical_clip(
             raise VideoContractError(f"Input has no video stream: {path}")
         stream = container.streams.video[0]
         input_rate = _stream_rate(stream)
-        try:
-            output_rate = choose_canonical_fps(input_rate) if fps is None else Fraction(str(fps))
-        except (ValueError, ZeroDivisionError) as exc:
-            raise VideoContractError(f"Cannot parse target fps {fps!r} as a rational frame rate.") from exc
-        if output_rate <= 0:
-            raise VideoContractError(f"Target fps must be positive, got {output_rate}.")
+        output_rate = choose_canonical_fps(input_rate) if fps is None else fps
         metadata_rotation = _rotation_degrees(stream)
         decoded = _decode_frames(container, stream, metadata_rotation)
         try:

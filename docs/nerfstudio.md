@@ -17,14 +17,15 @@ Run the exporter in the 4DAnyone inference environment:
 ```bash
 conda activate 4danyone
 python scripts/export_nerfstudio.py \
-    --result_dir data/fdanyone/<clip> \
+    --data_dir data/fdanyone/pexels/2785536-uhd_2160_3840_25fps \
+    --output_dir data/ns_data/pexels/2785536-uhd_2160_3840_25fps/frame_000 \
     --frame_index 0
 ```
 
-The exported dataset is written to:
+The exported Nerfstudio data is written to:
 
 ```bash
-data/nerfstudio/<clip>/frame_000/
+data/ns_data/pexels/<clip>/frame_000/
 ├── transforms.json
 ├── sparse_pcd.ply                 # visual-hull initialization
 ├── images/00.png ... <N-1>.png
@@ -37,7 +38,8 @@ Standard Splatfacto:
 
 ```bash
 ns-train splatfacto \
-    --data data/nerfstudio/<clip>/frame_000 \
+    --data data/ns_data/pexels/2785536-uhd_2160_3840_25fps/frame_000 \
+    --output-dir data/ns_outputs/pexels/2785536-uhd_2160_3840_25fps/frame_000 \
     --pipeline.model.background-color random
 ```
 
@@ -45,7 +47,8 @@ Splatfacto with perceptual loss:
 
 ```bash
 python scripts/train_nerfstudio.py splatfacto-perceptual \
-    --data data/nerfstudio/<clip>/frame_000 \
+    --data data/ns_data/pexels/2785536-uhd_2160_3840_25fps/frame_000 \
+    --output-dir data/ns_outputs/pexels/2785536-uhd_2160_3840_25fps/frame_000 \
     --pipeline.model.background-color random \
     --pipeline.model.perceptual-loss-weight 0.4 \
     --pipeline.model.perceptual-compute-dtype bfloat16
@@ -55,11 +58,11 @@ If the GPU supports `bfloat16`, we recommend enabling it to accelerate training.
 
 ## View
 
-Use the wrapper so the custom method is registered before Nerfstudio loads its saved config:
+Launch the viewer with the config path printed by training:
 
 ```bash
 python scripts/view_nerfstudio.py \
-    --load-config outputs/<clip>/splatfacto-perceptual/<timestamp>/config.yml \
+    --load-config <training-output>/config.yml \
     --viewer.websocket-port 7007
 ```
 

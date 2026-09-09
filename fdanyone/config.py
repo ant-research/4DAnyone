@@ -85,7 +85,7 @@ class ForegroundConfig:
 
 @dataclass(frozen=True)
 class FramingConfig:
-    """Sequence-level camera solve matching the current GVHMR demo."""
+    """Clip-wide camera solve matching the current GVHMR demo."""
 
     reference_radius: float = 3.0
     reference_target_height: float = 1.0

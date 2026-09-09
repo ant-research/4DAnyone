@@ -13,7 +13,7 @@
 >
 > - generates dozens of synchronized, view-consistent videos from a single monocular video.
 > - requires **22 GB** of peak CUDA memory, enabling inference on consumer GPUs.
-> - generates a 121-frame video in **27 seconds** on a single RTX 4090.
+> - averages **27 seconds per 121-frame video** on a single RTX 4090.
 
 ## News
 
@@ -57,6 +57,7 @@ A compact 360° layout for basic coverage. Start here for an initial test.
 ```bash
 python inference.py \
     --video_path "data/source/pexels/2785536-uhd_2160_3840_25fps.mp4" \
+    --output_dir "data/fdanyone/pexels/2785536-uhd_2160_3840_25fps" \
     --views_per_layer 6
 ```
 
@@ -69,6 +70,7 @@ A dense 360° layout with broad angular coverage, suitable for 4DGS reconstructi
 ```bash
 python inference.py \
     --video_path "data/source/pexels/2785536-uhd_2160_3840_25fps.mp4" \
+    --output_dir "data/fdanyone/pexels/2785536-uhd_2160_3840_25fps" \
     --views_per_layer 24
 ```
 
@@ -81,6 +83,7 @@ This layout distributes views across three pitch rings for broader coverage, ena
 ```bash
 python inference.py \
     --video_path "data/source/pexels/2785536-uhd_2160_3840_25fps.mp4" \
+    --output_dir "data/fdanyone/pexels/2785536-uhd_2160_3840_25fps" \
     --views_per_layer 16 --layer_pitches '[-10,15,35]'
 ```
 
@@ -93,6 +96,7 @@ A two-layer layout for dense coverage across the frontal 180° arc.
 ```bash
 python inference.py \
     --video_path "data/source/pexels/2785536-uhd_2160_3840_25fps.mp4" \
+    --output_dir "data/fdanyone/pexels/2785536-uhd_2160_3840_25fps" \
     --views_per_layer 12 --layer_pitches '[0,30]' --start_yaw -90 --yaw_span 180
 ```
 
@@ -102,6 +106,8 @@ python inference.py \
 
 Run `python inference.py --help` for the full list.
 
+- `video_path`: path to the source video.
+- `output_dir`: output directory for the current clip. Defaults to `data/fdanyone/<clip>`.
 - `views_per_layer`: number of evenly spaced views per pitch layer. It must be divisible by 4 or 6.
 - `layer_pitches`: pitch angles in degrees, one per layer. Positive values place cameras above the subject. Total views are `views_per_layer × len(layer_pitches)`.
 - `start_yaw`: horizontal angle of the first view, in degrees. Yaw `0` is the front view.
@@ -111,19 +117,22 @@ Run `python inference.py --help` for the full list.
 
 ### Output
 
-With the default `--data_dir data`, results follow this layout. See the [output documentation](docs/output.md) for the complete format.
+The output directory contains:
 
-```text
-data/
-├── gvhmr/results/<clip>/          # reusable motion-recovery result
-└── fdanyone/<clip>/
-    ├── metadata.json              # run settings, timings, resources
-    ├── cameras.json               # the final N-camera rig
-    ├── skeletons/00.mp4 ... <N-1>.mp4
-    └── videos/
-        ├── sparse/{00,04,09,12,14,19}.mp4  # default 24-view RCP proposals
-        └── dense/00.mp4 ... <N-1>.mp4       # generated target views
+```bash
+<clip>/                           # input filename without its extension
+├── metadata.json                 # run settings, timings, resources
+├── cameras.json                  # intrinsics and poses for N target views
+├── gvhmr/                        # reusable motion recovery
+│   ├── motion.json               # source timeline and motion metadata
+│   └── motion.safetensors        # motion tensors
+├── skeletons/00.mp4 ... <N-1>.mp4  # pose conditioning for each target view
+└── videos/
+    ├── sparse/{00,04,09,12,14,19}.mp4  # RCP videos
+    └── dense/00.mp4 ... <N-1>.mp4  # target videos
 ```
+
+Completed outputs are never overwritten. After a failed or interrupted run, rerun with the same `--output_dir` to reuse completed motion recovery and restart generation.
 
 ### Custom Data
 

@@ -11,6 +11,7 @@ from fdanyone.errors import FourDAnyoneError
 
 def inference(
     video_path: str,
+    output_dir: str | None = None,
     views_per_layer: int = 24,
     layer_pitches: list[int] = [15],  # noqa: B006 - normalized without mutation
     start_yaw: int = 0,
@@ -19,7 +20,6 @@ def inference(
     enable_rcp: bool = True,
     enable_tcr: bool = True,
     enable_turbo: bool = True,
-    data_dir: str = "data",
     model_dir: str = "models",
     checkpoint_path: str | None = None,
     mhr70_regressor_path: str | None = None,
@@ -34,6 +34,7 @@ def inference(
 
     Args:
         video_path: Input video; it must contain at least 121 usable frames.
+        output_dir: Output directory for this clip. Defaults to data/fdanyone/<clip>.
         views_per_layer: Number of evenly spaced yaw views at each pitch. It
             must be divisible by 4 or 6.
         layer_pitches: Camera pitch for each layer in degrees, for example
@@ -50,7 +51,6 @@ def inference(
         enable_tcr: Shift view groups cyclically between denoising steps.
         enable_turbo: Whether to use 4DAnyone-Turbo for accelerated denoising.
             Disable it to use the base 4DAnyone model.
-        data_dir: Root for reusable GVHMR motion and final 4DAnyone outputs.
         model_dir: Model root; missing public checkpoints download here.
         checkpoint_path: Local 4DAnyone checkpoint override.
         mhr70_regressor_path: Local SMPL-X-to-MHR70 regressor override.
@@ -78,6 +78,7 @@ def inference(
 
     return run_pipeline(
         video_path=video_path,
+        output_dir=output_dir,
         views_per_layer=views_per_layer,
         layer_pitches=layer_pitches,
         start_yaw=start_yaw,
@@ -86,7 +87,6 @@ def inference(
         enable_rcp=enable_rcp,
         enable_tcr=enable_tcr,
         enable_turbo=enable_turbo,
-        data_dir=data_dir,
         model_dir=model_dir,
         checkpoint_path=checkpoint_path,
         mhr70_regressor_path=mhr70_regressor_path,

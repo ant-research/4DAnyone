@@ -1,4 +1,4 @@
-"""Publish generated videos and their camera metadata."""
+"""Write generated videos, cameras, and run metadata into output staging."""
 
 from __future__ import annotations
 
@@ -14,7 +14,6 @@ from typing import TYPE_CHECKING
 from fdanyone.config import INFERENCE
 from fdanyone.device import CUDA_ALLOCATOR_CONF
 from fdanyone.errors import FourDAnyoneError
-from fdanyone.io import write_json
 
 if TYPE_CHECKING:
     from fdanyone.model.inference import GeneratedViews
@@ -100,7 +99,7 @@ def _target_cameras(payload: object, expected_count: int) -> list[dict]:
     return cameras
 
 
-def export_result(
+def write_output(
     *,
     clip: CanonicalClip,
     conditioning: Conditioning,
@@ -110,7 +109,7 @@ def export_result(
     model_identity: dict,
     pipeline_started: float,
 ) -> dict:
-    """Publish proposal, target, skeleton, camera, and metadata artifacts."""
+    """Write proposal, target, skeleton, camera, and metadata artifacts into staging."""
 
     root = Path(destination).expanduser().resolve()
     attention_backend = generated.attention_backend
@@ -205,8 +204,13 @@ def export_result(
         },
         "runtime": _runtime_metadata(generated.device),
     }
-    write_json(root / "cameras.json", _camera_rig_payload(camera_payload, camera_records))
-    write_json(root / "metadata.json", metadata)
+    # Staging is private. Output publication, not each JSON write, owns the
+    # commit boundary and interruption recovery.
+    for name, payload in (
+        ("cameras.json", _camera_rig_payload(camera_payload, camera_records)),
+        ("metadata.json", metadata),
+    ):
+        (root / name).write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n")
     return {
         "attention_backend": attention_backend,
         "num_rcp_videos": len(output_sparse),
