@@ -62,14 +62,7 @@ Launch the viewer with the config path printed by training:
 
 ```bash
 python scripts/view_nerfstudio.py \
-    --load-config <training-output>/config.yml \
-    --viewer.websocket-port 7007
-```
-
-For a remote viewer, forward the same port from the workstation:
-
-```bash
-ssh -N -L 7007:127.0.0.1:7007 <server>
+    --load-config <training-output>/config.yml
 ```
 
 Example 3DGS reconstruction in the Nerfstudio viewer:
