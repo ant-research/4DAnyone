@@ -213,10 +213,14 @@ def _denoise_targets_single(
     routes: Routes,
     device: str,
 ) -> Tensor:
+    """Denoise view groups on the GPU while the full target state stays on the CPU."""
+
     import torch
     from tqdm.auto import tqdm
 
     num_views = initial_latents.shape[0]
+    if initial_latents.device.type != "cpu":
+        raise FourDAnyoneError("Canonical target latents must remain on the CPU between denoising groups.")
     if pose_features.num_features != num_views:
         raise FourDAnyoneError(
             f"Target generation requires {num_views} pose features, got {pose_features.num_features}."
@@ -238,8 +242,8 @@ def _denoise_targets_single(
     with torch.inference_mode(), _bf16_autocast():
         for step_index, groups in enumerate(tqdm(routes, desc=f"Generate {num_views} target views")):
             for view_indices in groups:
-                index = torch.tensor(view_indices, dtype=torch.long, device=device)
-                local_latents = torch.index_select(latents, 0, index)
+                index = torch.tensor(view_indices, dtype=torch.long, device="cpu")
+                local_latents = torch.index_select(latents, 0, index).to(device)
                 pose_features.copy_group(view_indices, pose_feature_batch)
                 local_latents = denoise_group(
                     denoiser,
@@ -250,9 +254,9 @@ def _denoise_targets_single(
                     null_pose_feature,
                     step_index,
                 )
-                latents.index_copy_(0, index, local_latents)
+                latents.index_copy_(0, index, local_latents.to("cpu"))
                 del local_latents
-    return latents.detach().to("cpu")
+    return latents
 
 
 def _resolve_generation_plan(
@@ -498,11 +502,10 @@ def generate_views(
                 num_views=plan.view_plan.num_target_views,
                 num_frames=INFERENCE.num_frames,
                 seed=seed,
-                device=plan.primary_device,
+                device="cpu",
             )
             if plan.distributed:
                 denoiser = None
-                initial_latents = initial_latents.to("cpu")
                 _empty_cuda_cache()
                 target_latents, parallelism = _denoise_targets_multi_gpu(
                     checkpoint_path=checkpoint_path,

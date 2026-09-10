@@ -125,7 +125,7 @@ def _write_pose_feature_file(pose_features: PoseFeatureBank, path: Path) -> tupl
 
 @dataclass
 class _WorkerState:
-    """CUDA tensors and collectives owned by one spawned NCCL rank."""
+    """Per-rank CUDA workspace, with canonical latents kept on the primary CPU."""
 
     rank: int
     request: DistributedDenoiseRequest
@@ -163,7 +163,7 @@ class _WorkerState:
                 raise RuntimeError("The primary distributed rank does not own canonical latents.")
             scatter_list = [torch.zeros_like(local_input) for _ in range(self.world_size)]
             for worker_index, group in enumerate(wave):
-                index = torch.tensor(group, dtype=torch.long, device=self.device)
+                index = torch.tensor(group, dtype=torch.long, device="cpu")
                 scatter_list[worker_index].copy_(torch.index_select(self.latents, 0, index))
         dist.scatter(local_input, scatter_list=scatter_list, src=0)
         return local_input
@@ -201,8 +201,8 @@ class _WorkerState:
         if self.latents is None or gathered is None:
             raise RuntimeError("The primary distributed rank cannot commit gathered latents.")
         for group, result in zip(wave, gathered[: len(wave)], strict=True):
-            index = torch.tensor(group, dtype=torch.long, device=self.device)
-            self.latents.index_copy_(0, index, result)
+            index = torch.tensor(group, dtype=torch.long, device="cpu")
+            self.latents.index_copy_(0, index, result.to("cpu"))
 
     def denoise(self) -> None:
         """Run every route step, committing a complete step before TCR moves on."""
@@ -247,7 +247,7 @@ def _load_worker_state(rank: int, request: DistributedDenoiseRequest, denoiser: 
         context=payload["context"].to(dtype=denoiser.dtype, device=device),
         null_pose_feature=payload["null_pose_feature"].to(dtype=denoiser.dtype, device=device),
         pose_features=pose_features,
-        latents=payload["initial_latents"].to(dtype=denoiser.dtype, device=device) if rank == 0 else None,
+        latents=payload["initial_latents"].to(dtype=denoiser.dtype, copy=True) if rank == 0 else None,
         pose_feature_batch=torch.empty(
             (group_size, *request.pose_feature_shape[1:]),
             dtype=denoiser.dtype,
@@ -265,7 +265,7 @@ def _publish_worker_result(state: _WorkerState, report: WorkerReport) -> None:
         if state.latents is None:
             raise RuntimeError("The primary distributed rank has no target latents to publish.")
         temporary = root / ".target_latents.pt.tmp"
-        torch.save(state.latents.detach().to("cpu"), temporary)
+        torch.save(state.latents, temporary)
         os.replace(temporary, root / "target_latents.pt")
     (root / f"rank-{state.rank}.json").write_text(json.dumps(report, indent=2, sort_keys=True) + "\n")
 
@@ -308,29 +308,28 @@ def _worker(rank: int, request: DistributedDenoiseRequest) -> None:
         world_size=len(request.devices),
         timeout=timedelta(minutes=30),
     )
-    try:
-        state = _load_worker_state(rank, request, denoiser)
-        dist.barrier(device_ids=[device_index])
-        denoise_started = time.monotonic()
-        state.denoise()
-        torch.cuda.synchronize(device_index)
-        denoise_seconds = time.monotonic() - denoise_started
+    # A failed worker must exit so mp.spawn can terminate its peers. Normal
+    # NCCL destruction can wait forever for collectives those peers cannot finish.
+    state = _load_worker_state(rank, request, denoiser)
+    dist.barrier(device_ids=[device_index])
+    denoise_started = time.monotonic()
+    state.denoise()
+    torch.cuda.synchronize(device_index)
+    denoise_seconds = time.monotonic() - denoise_started
 
-        report: WorkerReport = {
-            "rank": rank,
-            "device": device,
-            "device_name": torch.cuda.get_device_name(device_index),
-            "attention_backend": denoiser.model.attention_backend,
-            "model_load_seconds": model_load_seconds,
-            "denoise_seconds": denoise_seconds,
-            "peak_vram_allocated_bytes": int(torch.cuda.max_memory_allocated(device_index)),
-            "peak_vram_reserved_bytes": int(torch.cuda.max_memory_reserved(device_index)),
-        }
-        _publish_worker_result(state, report)
-        dist.barrier(device_ids=[device_index])
-    finally:
-        if dist.is_initialized():
-            dist.destroy_process_group()
+    report: WorkerReport = {
+        "rank": rank,
+        "device": device,
+        "device_name": torch.cuda.get_device_name(device_index),
+        "attention_backend": denoiser.model.attention_backend,
+        "model_load_seconds": model_load_seconds,
+        "denoise_seconds": denoise_seconds,
+        "peak_vram_allocated_bytes": int(torch.cuda.max_memory_allocated(device_index)),
+        "peak_vram_reserved_bytes": int(torch.cuda.max_memory_reserved(device_index)),
+    }
+    _publish_worker_result(state, report)
+    dist.barrier(device_ids=[device_index])
+    dist.destroy_process_group()
 
 
 def denoise_targets_distributed(
