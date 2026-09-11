@@ -189,13 +189,14 @@ def download_example(data_dir: str = "data") -> dict[str, str]:
     if missing:
         # Repository paths carry a leading ``data/`` prefix while --data_dir is
         # the local root itself, so stage the snapshot and move each file.
-        staging = data / ".download"
-        _snapshot(missing, staging)
-        for relative in missing:
-            destination = destinations[relative]
-            destination.parent.mkdir(parents=True, exist_ok=True)
-            (staging / relative).replace(destination)
-        shutil.rmtree(staging)
+        data.mkdir(parents=True, exist_ok=True)
+        with tempfile.TemporaryDirectory(prefix=".download-", dir=data) as temporary:
+            staging = Path(temporary)
+            _snapshot(missing, staging)
+            for relative in missing:
+                destination = destinations[relative]
+                destination.parent.mkdir(parents=True, exist_ok=True)
+                (staging / relative).replace(destination)
     return {"examples": str(data / "source/pexels"), "revision": HF_REVISION}
 
 
@@ -211,10 +212,12 @@ def ensure_example_video(video_path: str | Path) -> Path:
     LOGGER.info("Downloading the bundled example clip %s", path.name)
     path.parent.mkdir(parents=True, exist_ok=True)
     # Stage beside the destination so the final rename stays on one filesystem.
-    staging = path.parent / ".download"
-    _snapshot(matches[:1], staging)
-    (staging / matches[0]).replace(path)
-    shutil.rmtree(staging)
+    # Each invocation owns its staging directory. Concurrent first-use downloads
+    # must not move or remove another invocation's files.
+    with tempfile.TemporaryDirectory(prefix=".download-", dir=path.parent) as temporary:
+        staging = Path(temporary)
+        _snapshot(matches[:1], staging)
+        (staging / matches[0]).replace(path)
     return path
 
 

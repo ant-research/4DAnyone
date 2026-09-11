@@ -16,7 +16,9 @@ outputs/
 /data/fdanyone/
 /data/gvhmr/
 /data/nerfstudio/
+/data/ns_data/
 /data/.download/
+.download-*/
 /data/source/pexels/*.mp4
 /models/
 /checkpoints/
