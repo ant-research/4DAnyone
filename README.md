@@ -6,16 +6,18 @@
 
 <p align="center"><img src="docs/assets/teaser.gif" width="100%" alt="4DAnyone teaser"></p>
 
-<p align="center">4DAnyone turns a casual monocular video into multi-view videos, enabling downstream 4DGS reconstruction.</p>
+<p align="center">Single video in, 4D human out. No rig, no calibration, no tripod.</p>
 
-> [!note]
-> 4DAnyone is a multi-view video model that:
->
-> - generates dozens of synchronized, view-consistent videos from a single monocular video.
-> - requires **22 GB** of peak CUDA memory, enabling inference on consumer GPUs.
-> - averages **27 seconds per 121-frame video** on a single RTX 4090.
+4DAnyone turns a casual monocular video into dozens of synchronized, view-consistent videos, enabling downstream 4DGS reconstruction.
+
+- Peaks at 22 GB of CUDA memory, enabling inference on consumer GPUs.
+- Averages 27 seconds per 121-frame video on a single RTX 4090.
+- Requires neither input camera parameters nor a static camera.
 
 ## News
+
+> [!note]
+> We're actively improving 4DAnyone. We recommend running `git pull` regularly to get the latest improvements.
 
 - **2026-09-05**: Reduced peak GPU memory below **24 GB**, enabling inference on consumer GPUs (RTX 4090).
 - **2026-09-02**: Released **4DAnyone-Turbo**, achieving a **5.58×** denoising speedup over 4DAnyone-Base.
