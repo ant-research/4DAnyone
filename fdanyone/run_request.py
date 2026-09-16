@@ -10,9 +10,12 @@ from fdanyone.errors import ConfigurationError
 from fdanyone.io import sha256_file, write_json
 
 REQUEST_FILE = ".4danyone-request.json"
+REQUEST_VERSION = 2
 
 
 def read_run_request(directory: str | Path) -> dict | None:
+    """Read a request in the current format without changing its arguments."""
+
     path = Path(directory) / REQUEST_FILE
     if not path.exists() and not path.is_symlink():
         return None
@@ -20,7 +23,7 @@ def read_run_request(directory: str | Path) -> dict | None:
         if path.is_symlink():
             raise ValueError("The request must be a regular file")
         value = json.loads(path.read_text())
-        if value["version"] != 1 or not isinstance(value["options"], dict):
+        if value["version"] != REQUEST_VERSION or not isinstance(value["options"], dict):
             raise ValueError("Unsupported request format")
         if not isinstance(value["options"]["video_path"], str) or not isinstance(value["source"], dict):
             raise ValueError("Invalid source identity")
@@ -49,7 +52,7 @@ def save_run_request(directory: str | Path, options: dict, **fields) -> dict:
             options[key] = str(Path(options[key]).expanduser().resolve())
     value = {
         **previous,
-        "version": 1,
+        "version": REQUEST_VERSION,
         "created_at": previous.get("created_at", datetime.now(timezone.utc).isoformat()),
         "options": {**options, "video_path": str(source), "output_dir": str(directory.resolve())},
         "source": identity,

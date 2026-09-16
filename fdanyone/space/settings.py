@@ -35,7 +35,6 @@ def validate_options(options: dict) -> None:
                 "layer_pitches",
                 "start_yaw",
                 "yaw_span",
-                "views_per_group",
                 "enable_rcp",
                 "enable_tcr",
             )

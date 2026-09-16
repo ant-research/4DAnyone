@@ -14,7 +14,6 @@ from fdanyone.space.controls import (
     PITCHES_JS,
     SLIDER_HTML,
     SLIDER_JS,
-    VIEWS_PER_GROUP,
     describe_gpus,
     gpu_model,
     validate_view_count,
@@ -190,7 +189,6 @@ class InferenceForm:
         options.update(
             gpu_ids=None if values["gpu_ids"] == self.gpus else values["gpu_ids"],
             target_fps="auto",
-            views_per_group=VIEWS_PER_GROUP,
             **{name: values[name] for name in ("enable_rcp", "enable_tcr", "attention_backend")},
             model_dir=str(self.config.model_dir),
             gvhmr_root=str(self.config.gvhmr_root),

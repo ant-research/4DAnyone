@@ -13,6 +13,7 @@ from typing import TYPE_CHECKING
 
 from fdanyone.config import INFERENCE
 from fdanyone.errors import AssetError, FourDAnyoneError
+from fdanyone.views import VIEWS_PER_GROUP
 
 if TYPE_CHECKING:
     from torch import Tensor
@@ -347,13 +348,13 @@ def build_pose_feature_cache(
     if view_plan.enable_rcp:
         rcp_jobs, rcp_builder = _pose_jobs(
             skeletons=conditioning.rcp_skeletons,
-            group_size=view_plan.views_per_group,
+            group_size=VIEWS_PER_GROUP,
             packed_views=1,
             channels_last=True,
         )
     target_jobs, target_builder = _pose_jobs(
         skeletons=conditioning.target_skeletons,
-        group_size=view_plan.views_per_group,
+        group_size=VIEWS_PER_GROUP,
         packed_views=2 if view_plan.enable_rcp else 1,
         channels_last=False,
     )

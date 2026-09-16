@@ -8,12 +8,11 @@ from dataclasses import dataclass
 from fdanyone.config import CAMERA
 from fdanyone.errors import ConfigurationError
 
-VALID_VIEWS_PER_GROUP = (4, 6)
+VIEWS_PER_GROUP = 6
 MIN_PITCH = -15
 MAX_PITCH = 45
 
-# RCP uses the canonical proposal cameras seen during training. The resolved
-# group size selects a prefix; at most the first four become target references.
+# RCP generates six canonical proposal cameras; the first four become target references.
 RCP_CAMERA_ORDER = (4, 9, 14, 19, 0, 12)
 
 
@@ -35,7 +34,6 @@ class ViewPlan:
     layer_pitches: tuple[int, ...]
     start_yaw: int
     yaw_span: int
-    views_per_group: int
     enable_rcp: bool
     enable_tcr: bool
 
@@ -49,7 +47,7 @@ class ViewPlan:
 
     @property
     def num_groups(self) -> int:
-        return self.num_target_views // self.views_per_group
+        return self.num_target_views // VIEWS_PER_GROUP
 
     @property
     def target_views(self) -> tuple[TargetView, ...]:
@@ -71,7 +69,7 @@ class ViewPlan:
 
     @property
     def rcp_camera_ids(self) -> tuple[int, ...]:
-        return RCP_CAMERA_ORDER[: self.views_per_group] if self.enable_rcp else ()
+        return RCP_CAMERA_ORDER if self.enable_rcp else ()
 
     @property
     def is_canonical_target_ring(self) -> bool:
@@ -88,7 +86,6 @@ class ViewPlan:
             "layer_pitches": list(self.layer_pitches),
             "start_yaw": self.start_yaw,
             "yaw_span": self.yaw_span,
-            "views_per_group": self.views_per_group,
             "enable_rcp": self.enable_rcp,
             "enable_tcr": self.enable_tcr,
         }
@@ -103,7 +100,6 @@ class ViewPlan:
                 layer_pitches=value["layer_pitches"],
                 start_yaw=value["start_yaw"],
                 yaw_span=value["yaw_span"],
-                views_per_group=value["views_per_group"],
                 enable_rcp=value["enable_rcp"],
                 enable_tcr=value["enable_tcr"],
             )
@@ -131,36 +127,12 @@ def _layer_pitches(value: object) -> tuple[int, ...]:
     return pitches
 
 
-def _group_size(value: int | str, num_target_views: int) -> int:
-    if isinstance(value, str):
-        if value.lower() == "auto":
-            divisors = tuple(size for size in VALID_VIEWS_PER_GROUP if num_target_views % size == 0)
-            if not divisors:
-                raise ConfigurationError(f"Total target views ({num_target_views}) must be divisible by 4 or 6.")
-            return max(divisors)
-        try:
-            value = int(value)
-        except ValueError:
-            raise ConfigurationError(
-                f"views_per_group must be 'auto' or one of {VALID_VIEWS_PER_GROUP}, got {value!r}."
-            ) from None
-    value = _integer("views_per_group", value)
-    if value not in VALID_VIEWS_PER_GROUP:
-        raise ConfigurationError(f"views_per_group must be one of {VALID_VIEWS_PER_GROUP}, got {value!r}.")
-    if num_target_views % value:
-        raise ConfigurationError(
-            f"Total target views ({num_target_views}) must be divisible by views_per_group ({value})."
-        )
-    return value
-
-
 def resolve_view_plan(
     *,
     views_per_layer: int = 24,
     layer_pitches: Sequence[int] = (15,),
     start_yaw: int = 0,
     yaw_span: int = 360,
-    views_per_group: int | str = "auto",
     enable_rcp: bool = True,
     enable_tcr: bool = True,
 ) -> ViewPlan:
@@ -175,20 +147,21 @@ def resolve_view_plan(
     yaw_span = _integer("yaw_span", yaw_span)
     if not 0 < yaw_span <= 360:
         raise ConfigurationError(f"yaw_span must be between 1 and 360 degrees, got {yaw_span}.")
-    resolved_group_size = _group_size(views_per_group, views_per_layer * len(pitches))
+    total_views = views_per_layer * len(pitches)
+    if total_views % VIEWS_PER_GROUP:
+        raise ConfigurationError(f"Total target views ({total_views}) must be divisible by {VIEWS_PER_GROUP}.")
     if not isinstance(enable_rcp, bool):
         raise ConfigurationError(f"enable_rcp must be True or False, got {enable_rcp!r}.")
     if not isinstance(enable_tcr, bool):
         raise ConfigurationError(f"enable_tcr must be True or False, got {enable_tcr!r}.")
 
-    # Up to six requested targets are cheaper and clearer to generate directly.
-    rcp_active = enable_rcp and views_per_layer * len(pitches) > 6
+    # One target group is generated directly, without proposal views.
+    rcp_active = enable_rcp and total_views > VIEWS_PER_GROUP
     return ViewPlan(
         views_per_layer=views_per_layer,
         layer_pitches=pitches,
         start_yaw=start_yaw,
         yaw_span=yaw_span,
-        views_per_group=resolved_group_size,
         enable_rcp=rcp_active,
         enable_tcr=enable_tcr,
     )

@@ -192,7 +192,6 @@ def run_pipeline(
     layer_pitches: list[int],
     start_yaw: int,
     yaw_span: int,
-    views_per_group: int | str,
     enable_rcp: bool,
     enable_tcr: bool,
     enable_turbo: bool,
@@ -213,7 +212,6 @@ def run_pipeline(
         layer_pitches=layer_pitches,
         start_yaw=start_yaw,
         yaw_span=yaw_span,
-        views_per_group=views_per_group,
         enable_rcp=enable_rcp,
         enable_tcr=enable_tcr,
     )

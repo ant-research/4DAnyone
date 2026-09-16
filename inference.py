@@ -16,7 +16,6 @@ def inference(
     layer_pitches: list[int] = [15],  # noqa: B006 - normalized without mutation
     start_yaw: int = 0,
     yaw_span: int = 360,
-    views_per_group: int | str = "auto",
     enable_rcp: bool = True,
     enable_tcr: bool = True,
     enable_turbo: bool = True,
@@ -36,18 +35,14 @@ def inference(
         video_path: Input video; it must contain at least 121 usable frames.
         output_dir: Output directory for this clip. Defaults to data/fdanyone/<clip>.
         views_per_layer: Number of evenly spaced yaw views at each pitch.
-            Total views (this number times the layer count) must be divisible by 4 or 6.
+            Total views (this number times the layer count) must be divisible by 6.
         layer_pitches: Camera pitch for each layer in degrees, for example
             [-10,15,35]. Positive values place the camera above the subject;
             each value must be between -15 and 45.
         start_yaw: First yaw in every layer, in degrees; 0 faces the person.
         yaw_span: Angular range sampled by each layer, from 1 to 360 degrees.
             The end angle is excluded so a full ring never duplicates a view.
-        views_per_group: Maximum target views generated together. auto chooses
-            6 when possible and otherwise 4; a manual value must be 4 or 6 and
-            divide the total view count.
-        enable_rcp: Use proposal views before generating more than six targets.
-            The proposal count follows views_per_group.
+        enable_rcp: Use six proposal views before generating more than six targets.
         enable_tcr: Shift view groups cyclically between denoising steps.
         enable_turbo: Whether to use 4DAnyone-Turbo for accelerated denoising.
             Disable it to use the base 4DAnyone model.
@@ -83,7 +78,6 @@ def inference(
         layer_pitches=layer_pitches,
         start_yaw=start_yaw,
         yaw_span=yaw_span,
-        views_per_group=views_per_group,
         enable_rcp=enable_rcp,
         enable_tcr=enable_tcr,
         enable_turbo=enable_turbo,

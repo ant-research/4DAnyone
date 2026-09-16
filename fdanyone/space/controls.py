@@ -9,7 +9,6 @@ from fdanyone.errors import ConfigurationError
 
 PITCH_PRESETS = ((15,), (15, 0), (30, 15, 0), (30, 15, 0, -15), (45, 30, 15, 0, -15))
 MAX_LAYERS = len(PITCH_PRESETS)
-VIEWS_PER_GROUP = 6
 _ASSETS = Path(__file__).with_name("assets")
 SLIDER_HTML = (_ASSETS / "slider.html").read_text()
 SLIDER_JS = (_ASSETS / "slider.js").read_text()

@@ -110,7 +110,7 @@ Run `python inference.py --help` for the full list.
 
 - `video_path`: path to the source video.
 - `output_dir`: output directory for the current clip. Defaults to `data/fdanyone/<clip>`.
-- `views_per_layer`: number of evenly spaced views per pitch layer. The total number of views must be divisible by 4 or 6.
+- `views_per_layer`: number of evenly spaced views per pitch layer. The total number of views must be divisible by 6.
 - `layer_pitches`: pitch angles in degrees, one per layer. Positive values place cameras above the subject. Total views are `views_per_layer × len(layer_pitches)`.
 - `start_yaw`: horizontal angle of the first view, in degrees. Yaw `0` is the front view.
 - `yaw_span`: horizontal range covered by each camera layer, in degrees.

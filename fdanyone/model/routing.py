@@ -5,6 +5,8 @@ from __future__ import annotations
 from collections.abc import Sequence
 from typing import TYPE_CHECKING
 
+from fdanyone.views import VIEWS_PER_GROUP
+
 if TYPE_CHECKING:
     from fdanyone.views import ViewPlan
 
@@ -94,14 +96,14 @@ def routing_steps(
         if not view_plan.enable_tcr:
             return 0
         offset = step_index * tcr_stride
-        if freeze_after_one_cycle and offset >= view_plan.views_per_group:
+        if freeze_after_one_cycle and offset >= VIEWS_PER_GROUP:
             return 0
         return offset
 
     return tuple(
         cyclic_groups(
             camera_order,
-            view_plan.views_per_group,
+            VIEWS_PER_GROUP,
             step_offset(step_index),
         )
         for step_index in range(num_steps)
