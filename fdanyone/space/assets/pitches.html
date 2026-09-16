@@ -1,0 +1,15 @@
+<div class="pitches-control">
+  <div class="layer-count inline-slider discrete">
+    <span class="slider-label">{{layers_label}}</span>
+    <span class="slider-track">
+      <span class="slider-rail">
+        <input id="camera-layers" type="range" min="1" max="5" step="1" value="1" aria-label="No. Layers">
+      </span>
+      <output class="slider-value" aria-hidden="true">1</output>
+    </span>
+  </div>
+  <div class="pitch-group">
+    <div class="pitch-heading">{{pitches_label}}</div>
+    <div class="pitch-fields" role="group" aria-label="Pitches" tabindex="-1"></div>
+  </div>
+</div>

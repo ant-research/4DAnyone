@@ -17,9 +17,9 @@ Routes = tuple[StepGroups, ...]
 def denoising_camera_order(view_plan: ViewPlan) -> CameraOrder:
     """Return one deterministic cycle over the plan's canonical camera IDs.
 
-    A single layer keeps its public yaw order. Multiple layers form a
-    Hamiltonian cycle in the open pitch-by-yaw grid, so partial yaw layouts do
-    not need a false edge between their horizontal endpoints.
+    A single row or column keeps its angular order. A two-dimensional layout
+    forms a Hamiltonian cycle in the open pitch-by-yaw grid, so partial yaw
+    layouts do not need a false edge between their horizontal endpoints.
     """
 
     views_per_layer = view_plan.views_per_layer
@@ -30,23 +30,30 @@ def denoising_camera_order(view_plan: ViewPlan) -> CameraOrder:
         raise ValueError("A denoising camera order requires distinct pitch layers.")
     if num_layers == 1:
         return tuple(range(views_per_layer))
-    if views_per_layer % 2:
-        raise ValueError("A multi-layer camera ring requires an even number of views per layer.")
+    if views_per_layer > 1 and views_per_layer % 2 and num_layers % 2:
+        raise ValueError("A multi-layer camera grid requires an even number of cameras.")
 
     # Public IDs follow input layer order. Physical vertical neighbors follow
     # pitch order, so this mapping changes traversal without changing identity.
     layers_by_pitch = tuple(sorted(range(num_layers), key=view_plan.layer_pitches.__getitem__))
+    if views_per_layer == 1:
+        return layers_by_pitch
 
-    def camera_id(pitch_rank: int, yaw_index: int) -> int:
+    # Keep the released traversal when yaw is even. Odd yaw counts have an even
+    # layer count, so transposing the grid gives the same adjacent-cycle construction.
+    transpose = views_per_layer % 2 == 1
+    rows, columns = (views_per_layer, num_layers) if transpose else (num_layers, views_per_layer)
+
+    def camera_id(row: int, column: int) -> int:
+        pitch_rank, yaw_index = (column, row) if transpose else (row, column)
         return layers_by_pitch[pitch_rank] * views_per_layer + yaw_index
 
-    # Reserve the lowest-pitch row as the return lane: descend the first yaw
-    # column, snake through the remaining rows, then traverse that row backward.
-    order = [camera_id(pitch_rank, 0) for pitch_rank in range(num_layers)]
-    for yaw_index in range(1, views_per_layer):
-        pitch_ranks = range(num_layers - 1, 0, -1) if yaw_index % 2 else range(1, num_layers)
-        order.extend(camera_id(pitch_rank, yaw_index) for pitch_rank in pitch_ranks)
-    order.extend(camera_id(0, yaw_index) for yaw_index in range(views_per_layer - 1, 0, -1))
+    # Reserve the first row as the return lane, then snake through the other rows.
+    order = [camera_id(row, 0) for row in range(rows)]
+    for column in range(1, columns):
+        row_order = range(rows - 1, 0, -1) if column % 2 else range(1, rows)
+        order.extend(camera_id(row, column) for row in row_order)
+    order.extend(camera_id(0, column) for column in range(columns - 1, 0, -1))
 
     return tuple(order)
 

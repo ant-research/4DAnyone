@@ -35,8 +35,8 @@ def inference(
     Args:
         video_path: Input video; it must contain at least 121 usable frames.
         output_dir: Output directory for this clip. Defaults to data/fdanyone/<clip>.
-        views_per_layer: Number of evenly spaced yaw views at each pitch. It
-            must be divisible by 4 or 6.
+        views_per_layer: Number of evenly spaced yaw views at each pitch.
+            Total views (this number times the layer count) must be divisible by 4 or 6.
         layer_pitches: Camera pitch for each layer in degrees, for example
             [-10,15,35]. Positive values place the camera above the subject;
             each value must be between -15 and 45.
@@ -45,7 +45,7 @@ def inference(
             The end angle is excluded so a full ring never duplicates a view.
         views_per_group: Maximum target views generated together. auto chooses
             6 when possible and otherwise 4; a manual value must be 4 or 6 and
-            divide views_per_layer.
+            divide the total view count.
         enable_rcp: Use proposal views before generating more than six targets.
             The proposal count follows views_per_group.
         enable_tcr: Shift view groups cyclically between denoising steps.

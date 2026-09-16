@@ -31,6 +31,7 @@ from fdanyone.io import remove_tree, resolve_output_path, write_json
 from fdanyone.motion.gvhmr import validate_gvhmr
 from fdanyone.motion.result import MotionResult
 from fdanyone.output_directory import OutputDirectory
+from fdanyone.run_request import save_run_request
 from fdanyone.video import (
     decode_canonical_clip,
     validate_clip_options,
@@ -41,6 +42,9 @@ from fdanyone.video import (
 from fdanyone.views import ViewPlan, resolve_view_plan
 
 LOGGER = logging.getLogger("fdanyone")
+PROGRESS = logging.getLogger("fdanyone.progress")
+PROGRESS.addHandler(logging.NullHandler())
+PROGRESS.propagate = False
 
 
 def _resolve_output_dir(output_dir: str | None, video_path: str) -> Path:
@@ -195,8 +199,10 @@ def run_pipeline(
 ) -> dict:
     """Execute inference for one clip, retaining reusable motion."""
 
+    request_options = locals().copy()
     pipeline_started = time.monotonic()
     logging.basicConfig(level=logging.INFO, format="%(asctime)s | %(levelname)s | %(message)s")
+    PROGRESS.info("Checking input and settings", extra={"fraction": 0.02})
     if seed < 0:
         raise ConfigurationError(f"seed must be non-negative, got {seed}.")
     if not isinstance(enable_turbo, bool):
@@ -232,6 +238,7 @@ def run_pipeline(
     attention_backend = get_attention_backend(attention_backend)
     LOGGER.info("Using attention backend: %s", attention_backend)
 
+    PROGRESS.info("Preparing model assets", extra={"fraction": 0.05})
     ensure_example_video(video_path)
     # Resolve the licensed body model before starting the much larger public
     # model download. Interactive use continues automatically after setup;
@@ -247,6 +254,7 @@ def run_pipeline(
     base_assets = resolve_base_assets(model_dir)
     regressor = resolve_regressor(mhr70_regressor_path, model_dir=model_dir)
     foreground_model = resolve_foreground_model(model_dir)
+    PROGRESS.info("Preparing the 121-frame clip", extra={"fraction": 0.10})
     clip = decode_canonical_clip(
         video_path,
         num_frames=INFERENCE.num_frames,
@@ -261,10 +269,12 @@ def run_pipeline(
         working_video = write_gvhmr_video(clip, scratch / "canonical_clip.mp4")
 
         with output.stage() as work:
+            PROGRESS.info("Recovering human motion with GVHMR", extra={"fraction": 0.15})
             if output.motion_dir.exists():
                 LOGGER.info("Reusing GVHMR motion from %s", output.motion_dir)
                 motion = MotionResult.load(output.motion_dir)
             else:
+                save_run_request(destination, request_options)
                 motion = _run_motion(
                     working_video=working_video,
                     output_dir=scratch / "gvhmr",
@@ -279,7 +289,9 @@ def run_pipeline(
                     "Choose a new --output_dir to recover motion with the current GVHMR version."
                 )
             motion.validate_against_clip(clip)
-            if not output.motion_dir.exists():
+            if output.motion_dir.exists():
+                save_run_request(destination, request_options)
+            else:
                 output.save_motion(motion)
 
             # Record the published identity only for the published checkpoint; an
@@ -300,6 +312,7 @@ def run_pipeline(
             from fdanyone.model.inference import generate_views
             from fdanyone.output_writer import write_output
 
+            PROGRESS.info("Building foreground masks and skeletons", extra={"fraction": 0.30})
             conditioning = _build_conditioning(
                 working_video=working_video,
                 clip_metadata=clip_metadata,
@@ -322,6 +335,7 @@ def run_pipeline(
                 raise ConfigurationError("Skeleton conditioning does not match the canonical clip timeline.")
             # Re-decode the worker-produced source before it becomes a model tensor.
             verify_lossless_video(clip, conditioning.source_video)
+            PROGRESS.info("Generating target-view videos", extra={"fraction": 0.45})
             generated = generate_views(
                 clip=clip,
                 conditioning=conditioning,
@@ -334,6 +348,7 @@ def run_pipeline(
                 devices=devices,
                 seed=seed,
             )
+            PROGRESS.info("Saving and validating generated videos", extra={"fraction": 0.92})
             summary = write_output(
                 clip=clip,
                 conditioning=conditioning,
@@ -346,4 +361,5 @@ def run_pipeline(
     finally:
         _discard_scratch(scratch)
     summary["output_dir"] = str(destination)
+    PROGRESS.info("Inference complete", extra={"fraction": 1.0})
     return summary

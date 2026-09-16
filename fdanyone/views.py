@@ -131,12 +131,12 @@ def _layer_pitches(value: object) -> tuple[int, ...]:
     return pitches
 
 
-def _group_size(value: int | str, views_per_layer: int) -> int:
+def _group_size(value: int | str, num_target_views: int) -> int:
     if isinstance(value, str):
         if value.lower() == "auto":
-            divisors = tuple(size for size in VALID_VIEWS_PER_GROUP if views_per_layer % size == 0)
+            divisors = tuple(size for size in VALID_VIEWS_PER_GROUP if num_target_views % size == 0)
             if not divisors:
-                raise ConfigurationError(f"views_per_layer ({views_per_layer}) must be divisible by 4 or 6.")
+                raise ConfigurationError(f"Total target views ({num_target_views}) must be divisible by 4 or 6.")
             return max(divisors)
         try:
             value = int(value)
@@ -147,8 +147,10 @@ def _group_size(value: int | str, views_per_layer: int) -> int:
     value = _integer("views_per_group", value)
     if value not in VALID_VIEWS_PER_GROUP:
         raise ConfigurationError(f"views_per_group must be one of {VALID_VIEWS_PER_GROUP}, got {value!r}.")
-    if views_per_layer % value:
-        raise ConfigurationError(f"views_per_layer ({views_per_layer}) must be divisible by views_per_group ({value}).")
+    if num_target_views % value:
+        raise ConfigurationError(
+            f"Total target views ({num_target_views}) must be divisible by views_per_group ({value})."
+        )
     return value
 
 
@@ -173,7 +175,7 @@ def resolve_view_plan(
     yaw_span = _integer("yaw_span", yaw_span)
     if not 0 < yaw_span <= 360:
         raise ConfigurationError(f"yaw_span must be between 1 and 360 degrees, got {yaw_span}.")
-    resolved_group_size = _group_size(views_per_group, views_per_layer)
+    resolved_group_size = _group_size(views_per_group, views_per_layer * len(pitches))
     if not isinstance(enable_rcp, bool):
         raise ConfigurationError(f"enable_rcp must be True or False, got {enable_rcp!r}.")
     if not isinstance(enable_tcr, bool):

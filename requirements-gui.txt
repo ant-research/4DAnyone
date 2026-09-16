@@ -1,0 +1,6 @@
+# Install alongside requirements.txt in the same Python environment.
+# Keep the embedded viewer and SDK matched. Gradio 6.20 avoids the custom
+# component remount regression observed in the newer 6.21-6.26 frontend.
+gradio==6.20.0
+gradio-rerun==0.37.1
+rerun-sdk==0.37.1

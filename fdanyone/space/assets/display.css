@@ -1,0 +1,71 @@
+#space-viewer { width: 100%; height: 100%; min-width: 0 !important; min-height: 0 !important;
+  padding: 0 !important; border: none !important; border-radius: 0 !important; overflow: hidden; }
+#space-viewer .html-container { padding: 0 !important; height: 100% !important; }
+#space-viewer .html-container > div { height: 100%; min-height: 0; }
+.space-display { position: relative; width: 100%; height: 100%; min-height: 0; overflow: hidden;
+  display: grid; grid-template-columns: minmax(0, 1fr);
+  grid-template-rows: minmax(0, 1fr) minmax(0, var(--target-panel-height, 30%)); background: #121214; }
+.scene-stage { position: relative; min-width: 0; min-height: 0; overflow: hidden; }
+/* Rerun 0.37.1 draws its recording strip and view title inside the canvas.
+   Keep those 52 px above this single-scene viewport without rescaling the scene. */
+.rerun-canvas { position: relative; width: 100%; height: calc(100% + 52px); top: -52px; }
+.rerun-canvas > canvas { display: block; width: 100% !important; height: 100% !important; }
+.scene-play { position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); z-index: 2;
+  display: grid; place-items: center; width: 72px; height: 72px; padding: 0; border-radius: 50%;
+  border: 1px solid #ffffff55; background: #121214b3; color: #f5f5f7; cursor: pointer; }
+.scene-play svg { width: 36px; height: 36px; fill: currentColor; pointer-events: none; }
+.scene-play:hover { background: #343437e6; }
+.scene-play:focus-visible { outline: 2px solid #3274d8; outline-offset: 3px; }
+.scene-loading { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; gap: 12px; z-index: 4;
+  background: #121214; color: #b5b5ba; font-size: var(--space-body-size); }
+.scene-spinner { width: 22px; height: 22px; box-sizing: border-box; border: 2px solid #343437;
+  border-top-color: #8eb4f1; border-radius: 50%; animation: scene-spin .8s linear infinite; }
+.scene-loading.failed .scene-spinner { display: none; }
+@keyframes scene-spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { .scene-spinner { animation: none; } }
+.scene-loading[hidden], .scene-play[hidden], .source-preview[hidden], .media-enlarged[hidden], .target-empty[hidden],
+.display-note[hidden] { display: none; }
+.space-display[data-ready="false"] .target-scroll { visibility: hidden; }
+.source-preview { position: absolute; bottom: 12px; right: 12px;
+  width: var(--source-tile-width, 135px); height: var(--source-tile-height, 240px); z-index: 3;
+  box-sizing: content-box; border: 1px solid #424245; border-radius: 5px; overflow: hidden; background: #121214; }
+.source-preview .media-tile { width: 100%; height: 100%; border: none; border-radius: 0; }
+.source-preview .source-title { position: absolute; top: 4px; left: 5px; padding: 2px 4px;
+  color: #f5f5f7; background: #121214d9; border-radius: 3px; font-size: var(--space-body-size); pointer-events: none; }
+.source-preview .video-enlarge { top: auto; bottom: 4px; }
+.target-panel { display: flex; flex-direction: column; min-height: 0; border-top: 1px solid #343437; }
+.media-heading { display: flex; align-items: center; justify-content: space-between;
+  height: 36px; flex: 0 0 36px; gap: 8px; padding: 0 10px; color: #f5f5f7;
+  font-size: var(--space-section-size); background: #121214; border-bottom: 1px solid #2a2a2d; }
+.target-count { font-size: var(--space-body-size); color: #8e8e93; }
+.target-panel > .media-heading { border-bottom: none; }
+.target-scroll { flex: 1; min-height: 0; overflow: auto; padding: 8px; overscroll-behavior: contain;
+  scrollbar-width: thin; scrollbar-color: #55555a #121214; scrollbar-gutter: stable; }
+.target-grid { --target-min-width: 120px;
+  display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, var(--target-min-width)), 1fr));
+  align-items: start; gap: 6px; }
+.target-grid .media-tile { box-sizing: border-box; width: 100%; aspect-ratio: var(--video-aspect); }
+.media-tile { box-sizing: content-box; min-width: 0; position: relative; background: #09090b; border: 1px solid #343437;
+  border-radius: 4px; overflow: hidden; }
+.video-content { width: 100%; height: 100%; position: relative; min-height: 0; }
+.video-content video { display: block; width: 100%; height: 100%; object-fit: contain; }
+.source-overlay { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; }
+.view-number { position: absolute; top: 4px; left: 5px; font-size: var(--space-body-size); line-height: 20px;
+  color: #fff; text-shadow: none; pointer-events: none; }
+.video-enlarge { position: absolute; top: 4px; right: 4px; width: 25px; height: 25px; padding: 0;
+  border: none; border-radius: 4px; background: #121214cf; color: #f5f5f7;
+  cursor: pointer; line-height: 25px; font-size: var(--space-section-size); }
+.video-enlarge:hover { background: #38383f; }
+.video-enlarge:focus-visible, .media-back:focus-visible { outline: 2px solid #3274d8; }
+.target-empty { display: grid; place-content: center; height: 100%; font-size: var(--space-body-size); color: #8e8e93; }
+.media-enlarged { position: absolute; inset: 0; z-index: 8; display: flex; flex-direction: column; background: #09090b; }
+.media-enlarged .media-heading { height: 40px; flex-basis: 40px; }
+.enlarged-content { flex: 1; min-height: 0; }
+.media-back { border: 1px solid #424245; border-radius: 999px; padding: 3px 12px;
+  background: #1d1d1f; color: #f5f5f7; cursor: pointer; font: inherit; }
+.display-note { position: absolute; left: 12px; bottom: calc(var(--target-panel-height, 30%) + 12px); max-width: calc(100% - 24px);
+  z-index: 5; padding: 7px 10px; background: #121214e8; color: #c2c2c8; font-size: var(--space-body-size);
+  border-radius: 4px; overflow-wrap: anywhere; }
+@media (max-width: 760px) {
+  .source-preview { right: 8px; bottom: 8px; }
+}

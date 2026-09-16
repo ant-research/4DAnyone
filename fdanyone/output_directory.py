@@ -11,6 +11,7 @@ from typing import TYPE_CHECKING
 
 from fdanyone.errors import ConfigurationError, FourDAnyoneError
 from fdanyone.io import lock_output, remove_tree, resolve_output_path
+from fdanyone.run_request import REQUEST_FILE, read_run_request
 
 if TYPE_CHECKING:
     from fdanyone.motion.result import MotionResult
@@ -58,7 +59,8 @@ class OutputDirectory:
             raise ConfigurationError(f"Output path already exists: {self.destination}. Choose a new --output_dir.")
         if os.path.lexists(self.destination / "metadata.json"):
             raise ConfigurationError(f"4DAnyone output already exists: {self.destination}. Choose a new --output_dir.")
-        allowed = {"gvhmr", ".inference"}
+        allowed = {"gvhmr", ".inference", REQUEST_FILE}
+        read_run_request(self.destination)
         if self._owner.is_file() and self._publishing.is_file():
             allowed.update(_GENERATED[:-1])
         self._check_entries(self.destination, allowed)

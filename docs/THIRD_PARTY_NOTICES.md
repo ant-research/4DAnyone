@@ -39,7 +39,7 @@ Classic GVHMR imports PyTorch3D rotation conversions through a broader training-
 - Location: `data/source/pexels`
 - Terms: <https://www.pexels.com/license/>
 
-The companion Hugging Face repository distributes 20 modified 121-frame excerpts for running the public demo. They are installed under the location above on demand. Their filenames, source videos, extraction ranges, and checksums are recorded in the pinned [Pexels asset manifest](https://huggingface.co/AntResearch/4DAnyone/blob/4c80e87b805a5f8461cf339cdbe2fb4249e585aa/data/source/pexels/README.md). Pexels permits its media to be used and modified for free and does not require attribution. The source links are retained for provenance and creator credit.
+The companion Hugging Face repository distributes 20 modified 121-frame excerpts for CLI inference and 4DAnyone Space. They are installed under the location above on demand. Their filenames, source videos, extraction ranges, and checksums are recorded in the pinned [Pexels asset manifest](https://huggingface.co/AntResearch/4DAnyone/blob/4c80e87b805a5f8461cf339cdbe2fb4249e585aa/data/source/pexels/README.md). Pexels permits its media to be used and modified for free and does not require attribution. The source links are retained for provenance and creator credit.
 
 ## DiffSynth-Studio inference runtime
 

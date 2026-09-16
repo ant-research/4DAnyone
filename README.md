@@ -110,7 +110,7 @@ Run `python inference.py --help` for the full list.
 
 - `video_path`: path to the source video.
 - `output_dir`: output directory for the current clip. Defaults to `data/fdanyone/<clip>`.
-- `views_per_layer`: number of evenly spaced views per pitch layer. It must be divisible by 4 or 6.
+- `views_per_layer`: number of evenly spaced views per pitch layer. The total number of views must be divisible by 4 or 6.
 - `layer_pitches`: pitch angles in degrees, one per layer. Positive values place cameras above the subject. Total views are `views_per_layer × len(layer_pitches)`.
 - `start_yaw`: horizontal angle of the first view, in degrees. Yaw `0` is the front view.
 - `yaw_span`: horizontal range covered by each camera layer, in degrees.
@@ -143,6 +143,55 @@ Use an input video with:
 - a single person in a full-body or upper-body shot.
 - no large camera movements, clear footage.
 - 1080p or higher, 9:16 portrait aspect ratio, at least 121 frames.
+
+## GUI
+
+We provide a Gradio space for interactive inference and visualization. It is built with [Rerun](https://rerun.io/), inspired by the community [4DAnyone-Rerun Space](https://huggingface.co/spaces/rerun/4danyone-rerun).
+
+<p align="center"><img src="docs/assets/space-viewer.gif" width="100%" alt="4DAnyone GUI viewer"></p>
+
+### Installation
+
+Follow the [installation instructions](#installation) above, then install the GUI packages in the same environment:
+
+```bash
+pip install -r requirements-gui.txt
+```
+
+### Viewer
+
+Pass an existing output directory:
+
+```bash
+python app.py \
+    --output_dir "data/fdanyone/pexels/2785536-uhd_2160_3840_25fps" \
+    --server_port 7860
+```
+
+Open **http://127.0.0.1:7860** to view the inference results. You can also resume unfinished inference runs.
+
+### Runner
+
+Choose a source video and a new output directory:
+
+```bash
+python app.py \
+    --video_path "data/source/pexels/2785536-uhd_2160_3840_25fps.mp4" \
+    --output_dir "data/fdanyone/pexels/2785536-uhd_2160_3840_25fps" \
+    --server_port 7860
+```
+
+Open **http://127.0.0.1:7860**, adjust the settings and click **Run Inference**.
+
+<!-- Runner video: paste the uploaded GitHub attachment URL here. -->
+
+### Remote Access
+
+Start the GUI on your GPU server using the commands above, then forward the port from your local computer:
+
+```bash
+ssh -N -L 7860:127.0.0.1:7860 user@gpu-host
+```
 
 ## 3DGS Reconstruction
 

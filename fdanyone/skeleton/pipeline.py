@@ -125,6 +125,8 @@ class _BodyGeometry:
     keypoints_incam: np.ndarray
     motion_world_to_canonical_world: np.ndarray
     regressor_metadata: dict[str, int | str]
+    mesh_world: np.ndarray | None = None
+    mesh_faces: np.ndarray | None = None
 
 
 def _video_tensor(path: Path, num_frames: int, *, crop: Crop | None = None):
@@ -191,6 +193,8 @@ def _body_geometry(
     regressor_path: Path,
     gvhmr_root: Path,
     device: str,
+    *,
+    include_mesh: bool = False,
 ) -> _BodyGeometry:
     import torch
 
@@ -238,6 +242,12 @@ def _body_geometry(
         vertices_world = apply_T_on_points(vertices_offset, transform)
         keypoints_world = apply_T_on_points(keypoints_global - offset, transform)
         joints_world = torch.einsum("jv,lvi->lji", joint_regressor, vertices_world)
+        mesh_world = (
+            apply_T_on_points(vertices_global - offset, transform).detach().cpu().numpy().astype(np.float32)
+            if include_mesh
+            else None
+        )
+        mesh_faces = np.asarray(smplx.faces, dtype=np.uint32) if include_mesh else None
 
     world_transform = transform[0].detach().clone()
     world_transform[:3, 3] -= world_transform[:3, :3] @ offset
@@ -248,6 +258,8 @@ def _body_geometry(
         keypoints_incam.detach().cpu().numpy().astype(np.float32),
         world_transform.detach().cpu().numpy().astype(np.float64),
         regressor_metadata,
+        mesh_world,
+        mesh_faces,
     )
     del smplx, vertices_global, vertices_incam, vertices_smpl, vertices_world, keypoints_global, keypoints_world
     torch.cuda.empty_cache()
