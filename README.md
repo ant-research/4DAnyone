@@ -183,7 +183,7 @@ python app.py \
 
 Open **http://127.0.0.1:7860**, adjust the settings and click **Run Inference**.
 
-<!-- Runner video: paste the uploaded GitHub attachment URL here. -->
+https://github.com/user-attachments/assets/a51ec078-2970-4a37-9061-104211e1618d
 
 ### Remote Access
 
