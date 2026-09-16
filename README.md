@@ -6,8 +6,6 @@
 
 <p align="center"><img src="docs/assets/teaser.gif" width="100%" alt="4DAnyone teaser"></p>
 
-<p align="center">Single video in, 4D human out. No rig, no calibration, no tripod.</p>
-
 4DAnyone turns a casual monocular video into dozens of synchronized, view-consistent videos, enabling downstream 4DGS reconstruction.
 
 - Peaks at 22 GB of CUDA memory, enabling inference on consumer GPUs.
@@ -17,12 +15,12 @@
 ## News
 
 > [!note]
-> We're actively improving 4DAnyone. We recommend running `git pull` regularly to get the latest improvements.
+> We're actively improving 4DAnyone. We recommend using the latest code.
 
+- **2026-09-16**: Released a **GUI** for interactive inference and visualization.
 - **2026-09-05**: Reduced peak GPU memory below **24 GB**, enabling inference on consumer GPUs (RTX 4090).
 - **2026-09-02**: Released **4DAnyone-Turbo**, achieving a **5.58×** denoising speedup over 4DAnyone-Base.
-- **2026-08-28**: Achieved a **1.42×** end-to-end speedup for the complete 24-view generation pipeline.
-- **2026-08-28**: Reduced peak GPU memory below **32 GB** while slightly improving speed.
+- **2026-08-28**: Achieved a **1.42×** end-to-end speedup and reduced peak GPU memory below **32 GB**.
 
 ## Installation
 
@@ -50,7 +48,7 @@ python scripts/download_example.py
 
 This repository provides two models: **4DAnyone-Base** with the standard denoising schedule and the distilled **4DAnyone-Turbo** for faster four-step denoising. 4DAnyone-Turbo is enabled by default for faster inference while maintaining generation quality comparable to 4DAnyone-Base. See [Inference performance](docs/inference_performance.md) for GPU memory, inference speed, and generation quality benchmarks.
 
-4DAnyone supports flexible target-view counts, pitch layers, and yaw coverage. Here are several common camera configurations:
+4DAnyone supports flexible target-view counts, pitch layers, and yaw coverage. Run `python inference.py --help` to see all available options. Here are several common camera configurations:
 
 ### 6-View Full Orbit
 
@@ -63,7 +61,7 @@ python inference.py \
     --views_per_layer 6
 ```
 
-<p align="left"><img src="docs/assets/inference-6-views.jpg" width="600" alt="Six evenly spaced target cameras on one full orbit"></p>
+<p align="left"><img src="docs/assets/inference-6-views.jpg" width="450" alt="Six evenly spaced target cameras on one full orbit"></p>
 
 ### 24-View Full Orbit
 
@@ -76,7 +74,7 @@ python inference.py \
     --views_per_layer 24
 ```
 
-<p align="left"><img src="docs/assets/inference-24-views.jpg" width="600" alt="Twenty-four evenly spaced target cameras on one full orbit"></p>
+<p align="left"><img src="docs/assets/inference-24-views.jpg" width="450" alt="Twenty-four evenly spaced target cameras on one full orbit"></p>
 
 ### 48-View Full Orbit, Three Pitch Layers
 
@@ -89,7 +87,7 @@ python inference.py \
     --views_per_layer 16 --layer_pitches '[-10,15,35]'
 ```
 
-<p align="left"><img src="docs/assets/inference-48-views-3-layers.jpg" width="600" alt="Forty-eight target cameras arranged over three pitch layers"></p>
+<p align="left"><img src="docs/assets/inference-48-views-3-layers.jpg" width="450" alt="Forty-eight target cameras arranged over three pitch layers"></p>
 
 ### 24-View Frontal Arc, Two Pitch Layers
 
@@ -102,24 +100,9 @@ python inference.py \
     --views_per_layer 12 --layer_pitches '[0,30]' --start_yaw -90 --yaw_span 180
 ```
 
-<p align="left"><img src="docs/assets/inference-24-views-front-180.jpg" width="600" alt="Twenty-four target cameras distributed over two pitch layers along the frontal 180-degree arc"></p>
+<p align="left"><img src="docs/assets/inference-24-views-front-180.jpg" width="450" alt="Twenty-four target cameras distributed over two pitch layers along the frontal 180-degree arc"></p>
 
-### Key Arguments
-
-Run `python inference.py --help` for the full list.
-
-- `video_path`: path to the source video.
-- `output_dir`: output directory for the current clip. Defaults to `data/fdanyone/<clip>`.
-- `views_per_layer`: number of evenly spaced views per pitch layer. The total number of views must be divisible by 6.
-- `layer_pitches`: pitch angles in degrees, one per layer. Positive values place cameras above the subject. Total views are `views_per_layer × len(layer_pitches)`.
-- `start_yaw`: horizontal angle of the first view, in degrees. Yaw `0` is the front view.
-- `yaw_span`: horizontal range covered by each camera layer, in degrees.
-- `gpu_ids`: GPU IDs used for parallel pose/VAE view stages and target denoising. Defaults to all visible GPUs.
-- `enable_turbo`: whether to use 4DAnyone-Turbo. Enabled by default.
-
-### Output
-
-The output directory contains:
+### Output Structure
 
 ```bash
 <clip>/                           # input filename without its extension
@@ -133,8 +116,6 @@ The output directory contains:
     ├── sparse/{00,04,09,12,14,19}.mp4  # RCP videos
     └── dense/00.mp4 ... <N-1>.mp4  # target videos
 ```
-
-Completed outputs are never overwritten. After a failed or interrupted run, rerun with the same `--output_dir` to reuse completed motion recovery and restart generation.
 
 ### Custom Data
 
@@ -150,17 +131,13 @@ We provide a Gradio space for interactive inference and visualization. It is bui
 
 <p align="center"><img src="docs/assets/space-viewer.gif" width="100%" alt="4DAnyone GUI viewer"></p>
 
-### Installation
-
-Follow the [installation instructions](#installation) above, then install the GUI packages in the same environment:
+Install the GUI packages in the `4danyone` environment:
 
 ```bash
 pip install -r requirements-gui.txt
 ```
 
-### Viewer
-
-Pass an existing output directory:
+Pass an existing output directory to view inference results:
 
 ```bash
 python app.py \
@@ -168,11 +145,7 @@ python app.py \
     --server_port 7860
 ```
 
-Open **http://127.0.0.1:7860** to view the inference results. You can also resume unfinished inference runs.
-
-### Runner
-
-Choose a source video and a new output directory:
+Choose a source video and a new output directory to run inference:
 
 ```bash
 python app.py \
@@ -181,38 +154,19 @@ python app.py \
     --server_port 7860
 ```
 
-Open **http://127.0.0.1:7860**, adjust the settings and click **Run Inference**.
-
-https://github.com/user-attachments/assets/a51ec078-2970-4a37-9061-104211e1618d
-
-### Remote Access
-
-Start the GUI on your GPU server using the commands above, then forward the port from your local computer:
+Open http://127.0.0.1:7860 in your browser. For a remote GPU server, first forward the port from your local computer:
 
 ```bash
 ssh -N -L 7860:127.0.0.1:7860 user@gpu-host
 ```
 
-## 3DGS Reconstruction
+https://github.com/user-attachments/assets/a51ec078-2970-4a37-9061-104211e1618d
 
-See the [nerfstudio guide](docs/nerfstudio.md) for details.
+## Reconstruction
 
-## Roadmap
+For 3DGS reconstruction, see the [nerfstudio guide](docs/nerfstudio.md).
 
-### Peak Memory Optimization
-
-- [x] Reduce peak GPU memory below 32 GB.
-- [x] Further reduce peak GPU memory below 24 GB.
-
-### Inference Acceleration
-
-- [x] Optimize inference speed through multi-GPU parallelism.
-- [x] Accelerate inference via few-step model distillation.
-
-### Reconstruction
-
-- [x] Support 3DGS reconstruction with nerfstudio.
-- [ ] Support 4DGS reconstruction with an open-source method.
+We will integrate an open-source 4DGS reconstruction method. Stay tuned!
 
 ## Citation
 
