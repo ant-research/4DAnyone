@@ -10,7 +10,7 @@
 
 - Peaks at 22 GB of CUDA memory, enabling inference on consumer GPUs.
 - Averages 27 seconds per 121-frame video on a single RTX 4090.
-- Requires neither input camera parameters nor a static camera.
+- No input camera parameters or static camera required.
 
 ## News
 
@@ -112,10 +112,10 @@ python inference.py \
 │   ├── motion.json               # source timeline and motion metadata
 │   └── motion.safetensors        # motion tensors
 ├── skeletons/00.mp4 ... <N-1>.mp4  # pose conditioning for each target view
-└── videos/
-    ├── sparse/{00,04,09,12,14,19}.mp4  # RCP videos
-    └── dense/00.mp4 ... <N-1>.mp4  # target videos
+└── videos/00.mp4 ... <N-1>.mp4     # target videos
 ```
+
+RCP proposals are passed internally as latents; only target videos are saved.
 
 ### Custom Data
 

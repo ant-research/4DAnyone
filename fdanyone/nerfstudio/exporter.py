@@ -24,6 +24,7 @@ from fdanyone.nerfstudio.visual_hull import (
     write_sparse_point_cloud,
 )
 from fdanyone.output_directory import read_output_metadata
+from fdanyone.result_videos import read_target_videos
 
 # Nerfstudio casts mask pixels directly to bool, so soft BiRefNet predictions
 # must cross a real decision boundary before serialization.
@@ -71,17 +72,6 @@ def _extract_frame(video_path: Path, frame_index: int) -> np.ndarray:
     if image is None:
         raise FourDAnyoneError(f"Video {video_path} has no frame {frame_index}.")
     return image
-
-
-def _dense_video_paths(result: Path, cameras: list[dict]) -> tuple[Path, ...]:
-    paths = []
-    for camera in cameras:
-        camera_id = int(camera["camera_id"])
-        relative = f"videos/dense/{camera_id:02d}.mp4"
-        if camera.get("video") != relative:
-            raise FourDAnyoneError(f"Camera {camera_id:02d} points to the wrong target video.")
-        paths.append(result / relative)
-    return tuple(paths)
 
 
 def _validate_raster(image: np.ndarray, camera: dict) -> None:
@@ -187,7 +177,7 @@ def export_nerfstudio(
     read_output_metadata(result)
     cameras = _camera_records(_read_cameras(result))
     transforms = _transforms(cameras)
-    videos = _dense_video_paths(result, cameras)
+    videos = read_target_videos(result, cameras)
 
     if output_dir is None:
         destination = Path("data/ns_data") / result.name / f"frame_{frame_index:03d}"

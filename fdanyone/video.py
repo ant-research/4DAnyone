@@ -121,6 +121,26 @@ class CanonicalFrame:
 
 
 @dataclass(frozen=True)
+class ClipInfo:
+    """Input provenance and raster information without decoded pixel storage."""
+
+    source_path: Path
+    fps: Fraction
+    start_time: Fraction
+    num_frames: int
+    height: int
+    width: int
+
+    @property
+    def fps_num(self) -> int:
+        return self.fps.numerator
+
+    @property
+    def fps_den(self) -> int:
+        return self.fps.denominator
+
+
+@dataclass(frozen=True)
 class CanonicalClip:
     source_path: Path
     source_size_bytes: int
@@ -131,6 +151,17 @@ class CanonicalClip:
     start_time: Fraction
     frames: tuple[CanonicalFrame, ...]
     rotation_degrees: int
+
+    @property
+    def info(self) -> ClipInfo:
+        return ClipInfo(
+            source_path=self.source_path,
+            fps=self.fps,
+            start_time=self.start_time,
+            num_frames=len(self.frames),
+            height=self.height,
+            width=self.width,
+        )
 
     @property
     def height(self) -> int:

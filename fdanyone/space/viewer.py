@@ -20,6 +20,7 @@ from fdanyone.config import FRAMING
 from fdanyone.errors import FourDAnyoneError
 from fdanyone.geometry.cameras import camera_grid, reference_intrinsics
 from fdanyone.output_directory import read_output_metadata
+from fdanyone.result_videos import read_target_videos
 from fdanyone.space import scene
 
 _EXPORT_LOCK = threading.Lock()
@@ -60,12 +61,8 @@ def read_result(directory: str | Path) -> Result:
         frames = int(metadata["output"]["frames_per_video"])
         if fps <= 0 or frames != 121 or metadata["output"]["target_views"] != len(cameras):
             raise ValueError("Output does not describe synchronized 121-frame videos")
-        videos = []
+        videos = read_target_videos(root, cameras)
         for camera in cameras:
-            camera_id = camera["camera_id"]
-            relative = f"videos/dense/{camera_id:02d}.mp4"
-            if camera["video"] != relative:
-                raise ValueError(f"Unexpected video path for camera {camera_id}")
             intrinsic = np.asarray(camera["K"], dtype=np.float64)
             transform = np.asarray(camera["camera_to_world"], dtype=np.float64)
             if (
@@ -75,13 +72,12 @@ def read_result(directory: str | Path) -> Result:
                 or not np.isfinite(transform).all()
                 or not np.allclose(transform[3], [0, 0, 0, 1])
             ):
-                raise ValueError(f"Invalid calibration for camera {camera_id}")
+                raise ValueError(f"Invalid calibration for camera {camera['camera_id']}")
             if min(camera["image_width"], camera["image_height"]) <= 0:
                 raise ValueError("Invalid camera image dimensions")
-            videos.append(_contained_file(root, relative))
     except (OSError, ValueError, TypeError, KeyError, ZeroDivisionError) as exc:
         raise FourDAnyoneError(f"Cannot open this 4DAnyone output: {exc}") from exc
-    return Result(root, metadata, tuple(cameras), tuple(videos), fps, frames)
+    return Result(root, metadata, tuple(cameras), videos, fps, frames)
 
 
 def _target_video(result: Result, camera_id: int, destination: Path, check_cancelled: Callable) -> tuple[int, int]:

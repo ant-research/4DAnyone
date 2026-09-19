@@ -4,20 +4,19 @@ from __future__ import annotations
 
 import gc
 import logging
-from collections.abc import Callable, Iterable
+from collections.abc import Callable
 from concurrent.futures import Future, ThreadPoolExecutor, as_completed
 from copy import deepcopy
-from dataclasses import dataclass
+from fractions import Fraction
 from pathlib import Path
 from threading import BoundedSemaphore, Event
 from typing import TYPE_CHECKING, TypeVar
 
 import numpy as np
-from PIL import Image
 
 from fdanyone.config import INFERENCE
 from fdanyone.errors import FourDAnyoneError
-from fdanyone.video import CanonicalClip, write_video
+from fdanyone.video import write_video
 
 if TYPE_CHECKING:
     from torch import Tensor
@@ -27,22 +26,6 @@ if TYPE_CHECKING:
 LOGGER = logging.getLogger("fdanyone")
 
 Output = TypeVar("Output")
-
-
-@dataclass(frozen=True)
-class PublishedRcp:
-    """Canonical RCP frame directories and videos."""
-
-    frame_directories: tuple[Path, ...]
-    videos: tuple[Path, ...]
-
-
-@dataclass(frozen=True)
-class _DecodedView:
-    """Host-owned values consumed by publication sinks."""
-
-    video: Tensor | None
-    rgb_frames: tuple[np.ndarray, ...]
 
 
 def _bf16_autocast():
@@ -58,36 +41,6 @@ def _rgb_frames(video: Tensor) -> tuple[np.ndarray, ...]:
     return tuple(
         scaled[:, frame_index].permute(1, 2, 0).numpy().astype(np.uint8) for frame_index in range(scaled.shape[1])
     )
-
-
-def _save_jpegs(video: Tensor, camera_id: int, root: Path) -> Path:
-    import torchvision.transforms.functional as transform
-
-    frame_dir = root / f"{camera_id:06d}"
-    frame_dir.mkdir(parents=True, exist_ok=False)
-    for frame_index in range(video.shape[1]):
-        normalized = video[:, frame_index].float().mul_(0.5).add_(0.5).clamp_(0.0, 1.0)
-        image = transform.to_pil_image(normalized)
-        image.save(frame_dir / f"{frame_index:06d}.jpg", quality=INFERENCE.rcp_jpeg_quality)
-    return frame_dir
-
-
-def load_reference_videos(frame_dirs: Iterable[Path], num_frames: int) -> Tensor:
-    """Load the frozen JPEG reference boundary as ``[V,C,F,H,W]``."""
-
-    import torch
-    import torchvision.transforms.functional as transform
-
-    videos = []
-    for frame_dir in frame_dirs:
-        frames = []
-        for frame_index in range(num_frames):
-            path = frame_dir / f"{frame_index:06d}.jpg"
-            with Image.open(path) as image:
-                frames.append(transform.to_tensor(image.convert("RGB")))
-        videos.append(torch.stack(frames, dim=0))
-    frame_first = torch.stack(videos, dim=0).mul_(2.0).sub_(1.0)
-    return frame_first.permute(0, 2, 1, 3, 4)
 
 
 class VaeExecutor:
@@ -239,9 +192,7 @@ class VaeExecutor:
     def _decode_and_publish(
         self,
         latents: Tensor,
-        sink: Callable[[int, _DecodedView], Output],
-        *,
-        retain_video: bool,
+        sink: Callable[[int, tuple[np.ndarray, ...]], Output],
     ) -> tuple[Output, ...]:
         import torch
 
@@ -277,13 +228,13 @@ class VaeExecutor:
                             decoded = self._decode_view(model, latents[index], device)
                             device_video = decoded[0].detach()
                             rgb_frames = _rgb_frames(device_video)
-                            video = device_video.to(device="cpu").contiguous() if retain_video else None
                             del decoded, device_video
                             future = codec_pool.submit(
                                 sink,
                                 index,
-                                _DecodedView(video=video, rgb_frames=rgb_frames),
+                                rgb_frames,
                             )
+                            del rgb_frames
                             future.add_done_callback(release_slot)
                             sink_futures[index] = future
                         except BaseException:
@@ -299,56 +250,21 @@ class VaeExecutor:
                 raise RuntimeError("VAE decode completed without every canonical view.")
             return tuple(future.result() for future in sink_futures if future is not None)
 
-    def publish_rcp(
-        self,
-        latents: Tensor,
-        camera_ids: tuple[int, ...],
-        output_dir: Path,
-        clip: CanonicalClip,
-    ) -> PublishedRcp:
-        if latents.shape[0] != len(camera_ids):
-            raise FourDAnyoneError(f"RCP decode expected {len(camera_ids)} latent views, got {latents.shape[0]}.")
-        frame_root = output_dir / "frames"
-        video_root = output_dir / "videos"
-        frame_root.mkdir(parents=True, exist_ok=False)
-        video_root.mkdir(parents=True, exist_ok=False)
-
-        def publish(index: int, decoded: _DecodedView) -> tuple[Path, Path]:
-            camera_id = camera_ids[index]
-            LOGGER.info("Publishing RCP camera %02d", camera_id)
-            if decoded.video is None:
-                raise RuntimeError("RCP publication requires the decoded BF16 video.")
-            frame_dir = _save_jpegs(decoded.video, camera_id, frame_root)
-            video_path = write_video(
-                iter(decoded.rgb_frames),
-                video_root / f"{camera_id:02d}.mp4",
-                clip.fps,
-                crf=INFERENCE.target_h264_crf,
-                preset=INFERENCE.h264_preset,
-            )
-            return frame_dir, video_path
-
-        published = self._decode_and_publish(latents, publish, retain_video=True)
-        return PublishedRcp(
-            frame_directories=tuple(item[0] for item in published),
-            videos=tuple(item[1] for item in published),
-        )
-
-    def publish_targets(self, latents: Tensor, output_dir: Path, clip: CanonicalClip) -> tuple[Path, ...]:
+    def publish_targets(self, latents: Tensor, output_dir: Path, fps: Fraction) -> tuple[Path, ...]:
         video_root = output_dir / "videos"
         video_root.mkdir(parents=True, exist_ok=False)
 
-        def publish(camera_id: int, decoded: _DecodedView) -> Path:
+        def publish(camera_id: int, rgb_frames: tuple[np.ndarray, ...]) -> Path:
             LOGGER.info("Publishing target camera %02d", camera_id)
             return write_video(
-                iter(decoded.rgb_frames),
+                iter(rgb_frames),
                 video_root / f"{camera_id:02d}.mp4",
-                clip.fps,
+                fps,
                 crf=INFERENCE.target_h264_crf,
                 preset=INFERENCE.h264_preset,
             )
 
-        return self._decode_and_publish(latents, publish, retain_video=False)
+        return self._decode_and_publish(latents, publish)
 
     def release_replicas(self) -> None:
         """Keep one CPU model while releasing stage-local parallel replicas."""

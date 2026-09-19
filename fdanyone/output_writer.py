@@ -14,18 +14,13 @@ from typing import TYPE_CHECKING
 from fdanyone.config import INFERENCE
 from fdanyone.device import CUDA_ALLOCATOR_CONF
 from fdanyone.errors import FourDAnyoneError
+from fdanyone.result_videos import target_video_path
 
 if TYPE_CHECKING:
     from fdanyone.model.inference import GeneratedViews
     from fdanyone.motion.result import MotionResult
     from fdanyone.skeleton.pipeline import Conditioning
-    from fdanyone.video import CanonicalClip
-
-
-def _copy_file(source: Path, destination: Path) -> Path:
-    destination.parent.mkdir(parents=True, exist_ok=True)
-    shutil.copy2(source, destination)
-    return destination
+    from fdanyone.video import ClipInfo
 
 
 def _runtime_metadata(device: str) -> dict:
@@ -72,7 +67,7 @@ def _camera_rig_payload(payload: dict, cameras: list[dict]) -> dict:
                 "camera_to_world": camera["camera_to_world"],
                 "image_width": int(camera["image_width"]),
                 "image_height": int(camera["image_height"]),
-                "video": f"videos/dense/{camera_id:02d}.mp4",
+                "video": str(target_video_path(camera_id)),
                 "skeleton_video": f"skeletons/{camera_id:02d}.mp4",
             }
         )
@@ -101,7 +96,7 @@ def _target_cameras(payload: object, expected_count: int) -> list[dict]:
 
 def write_output(
     *,
-    clip: CanonicalClip,
+    clip: ClipInfo,
     conditioning: Conditioning,
     generated: GeneratedViews,
     destination: str | Path,
@@ -109,17 +104,13 @@ def write_output(
     model_identity: dict,
     pipeline_started: float,
 ) -> dict:
-    """Write proposal, target, skeleton, camera, and metadata artifacts into staging."""
+    """Write target, skeleton, camera, and metadata artifacts into staging."""
 
     root = Path(destination).expanduser().resolve()
     attention_backend = generated.attention_backend
     view_plan = generated.view_plan
     if conditioning.view_plan != view_plan:
         raise FourDAnyoneError("Conditioning and generation resolved different view plans.")
-    if len(generated.rcp_videos) != len(view_plan.rcp_camera_ids):
-        raise FourDAnyoneError(
-            f"Generation returned {len(generated.rcp_videos)} RCP videos, expected {len(view_plan.rcp_camera_ids)}."
-        )
     if len(generated.target_videos) != view_plan.num_target_views:
         raise FourDAnyoneError(
             f"Generation returned {len(generated.target_videos)} target videos, expected {view_plan.num_target_views}."
@@ -130,24 +121,14 @@ def write_output(
             f"expected {view_plan.num_target_views}."
         )
 
-    sparse_root = root / "videos" / "sparse"
-    dense_root = root / "videos" / "dense"
+    videos_root = root / "videos"
     skeletons_root = root / "skeletons"
-    dense_root.mkdir(parents=True, exist_ok=False)
+    videos_root.mkdir(parents=True, exist_ok=False)
     skeletons_root.mkdir(exist_ok=False)
-    if generated.rcp_videos:
-        sparse_root.mkdir(exist_ok=False)
-
-    output_sparse = tuple(
-        _copy_file(source, sparse_root / f"{camera_id:02d}.mp4")
-        for camera_id, source in zip(view_plan.rcp_camera_ids, generated.rcp_videos, strict=True)
-    )
-    output_dense = tuple(
-        _copy_file(source, dense_root / f"{camera_id:02d}.mp4")
-        for camera_id, source in enumerate(generated.target_videos)
-    )
+    for camera_id, source in enumerate(generated.target_videos):
+        shutil.copy2(source, root / target_video_path(camera_id))
     for camera_id, skeleton in enumerate(conditioning.target_skeletons):
-        _copy_file(skeleton.path, skeletons_root / f"{camera_id:02d}.mp4")
+        shutil.copy2(skeleton.path, skeletons_root / f"{camera_id:02d}.mp4")
 
     camera_payload = json.loads((conditioning.root / "cameras.json").read_text())
     conditioning_metadata = json.loads((conditioning.root / "metadata.json").read_text())
@@ -178,7 +159,7 @@ def write_output(
             "filename": clip.source_path.name,
             "fps": f"{clip.fps_num}/{clip.fps_den}",
             "start_time_seconds": float(clip.start_time),
-            "num_frames": len(clip.frames),
+            "num_frames": clip.num_frames,
             "width": clip.width,
             "height": clip.height,
         },
@@ -195,8 +176,7 @@ def write_output(
         "model": dict(model_identity),
         "generation": generation_metadata,
         "output": {
-            "rcp_views": len(output_sparse),
-            "target_views": len(output_dense),
+            "target_views": view_plan.num_target_views,
             "frames_per_video": INFERENCE.num_frames,
             "width": INFERENCE.width,
             "height": INFERENCE.height,
@@ -213,8 +193,7 @@ def write_output(
         (root / name).write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n")
     return {
         "attention_backend": attention_backend,
-        "num_rcp_videos": len(output_sparse),
-        "num_target_videos": len(output_dense),
+        "num_target_videos": view_plan.num_target_views,
         "fps": f"{clip.fps_num}/{clip.fps_den}",
         "peak_vram_allocated_bytes": generated.peak_vram_allocated_bytes,
         "peak_vram_reserved_bytes": generated.peak_vram_reserved_bytes,

@@ -333,9 +333,12 @@ def run_pipeline(
                 raise ConfigurationError("Skeleton conditioning does not match the canonical clip timeline.")
             # Re-decode the worker-produced source before it becomes a model tensor.
             verify_lossless_video(clip, conditioning.source_video)
+            # Generation reads the verified working video. Only lightweight
+            # provenance is needed from the original full-resolution clip now.
+            clip_info = clip.info
+            del clip
             PROGRESS.info("Generating target-view videos", extra={"fraction": 0.45})
             generated = generate_views(
-                clip=clip,
                 conditioning=conditioning,
                 checkpoint_path=checkpoint,
                 turbo_lora_path=turbo_lora,
@@ -348,7 +351,7 @@ def run_pipeline(
             )
             PROGRESS.info("Saving and validating generated videos", extra={"fraction": 0.92})
             summary = write_output(
-                clip=clip,
+                clip=clip_info,
                 conditioning=conditioning,
                 generated=generated,
                 destination=work,
