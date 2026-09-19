@@ -115,8 +115,6 @@ python inference.py \
 └── videos/00.mp4 ... <N-1>.mp4     # target videos
 ```
 
-RCP proposals are passed internally as latents; only target videos are saved.
-
 ### Custom Data
 
 Use an input video with:
