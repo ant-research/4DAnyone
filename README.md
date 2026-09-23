@@ -6,11 +6,10 @@
 
 <p align="center"><img src="docs/assets/teaser.gif" width="100%" alt="4DAnyone teaser"></p>
 
-4DAnyone turns a casual monocular video into dozens of synchronized, view-consistent videos, enabling downstream 4DGS reconstruction.
+4DAnyone turns a casual monocular video into consistent multiview videos, enabling downstream 4DGS reconstruction.
 
-- Peaks at 22 GB of CUDA memory, enabling inference on consumer GPUs.
-- Averages 27 seconds per 121-frame video on a single RTX 4090.
 - No input camera parameters or static camera required.
+- Supports dozens of output views with flexible camera placement.
 
 ## News
 
@@ -46,7 +45,14 @@ python scripts/download_example.py
 
 ## Inference
 
-This repository provides two models: **4DAnyone-Base** with the standard denoising schedule and the distilled **4DAnyone-Turbo** for faster four-step denoising. 4DAnyone-Turbo is enabled by default for faster inference while maintaining generation quality comparable to 4DAnyone-Base. See [Inference performance](docs/inference_performance.md) for GPU memory, inference speed, and generation quality benchmarks.
+We provide two models: **4DAnyone-Base** with the standard denoising schedule and the distilled **4DAnyone-Turbo** for faster four-step denoising (enabled by default).
+
+> [!note]
+> See [Inference performance](docs/inference_performance.md) for GPU memory, inference speed, and generation quality benchmarks.
+>
+> - Peaks at 22 GB of CUDA memory, enabling inference on consumer GPUs.
+> - Averages 27 seconds per 121-frame video on a single RTX 4090.
+> - 4DAnyone-Turbo delivers generation quality comparable to 4DAnyone-Base.
 
 4DAnyone supports flexible target-view counts, pitch layers, and yaw coverage. Run `python inference.py --help` to see all available options. Here are several common camera configurations:
 
