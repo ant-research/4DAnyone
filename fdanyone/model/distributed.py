@@ -245,7 +245,7 @@ def _load_worker_state(rank: int, request: DistributedDenoiseRequest, denoiser: 
         device_index=int(device.removeprefix("cuda:")),
         source=payload["source"].to(dtype=denoiser.dtype, device=device),
         context=payload["context"].to(dtype=denoiser.dtype, device=device),
-        null_pose_feature=payload["null_pose_feature"].to(dtype=denoiser.dtype, device=device),
+        null_pose_feature=payload["null_pose_feature"],
         pose_features=pose_features,
         latents=payload["initial_latents"].to(dtype=denoiser.dtype, copy=True) if rank == 0 else None,
         pose_feature_batch=torch.empty(

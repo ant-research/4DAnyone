@@ -10,8 +10,6 @@ from __future__ import annotations
 import gc
 import logging
 import math
-from collections.abc import Iterator
-from contextlib import contextmanager
 from dataclasses import dataclass
 from fractions import Fraction
 from pathlib import Path
@@ -101,19 +99,6 @@ def _empty_cuda_cache() -> None:
         torch.cuda.empty_cache()
 
 
-@contextmanager
-def _denoiser_on_device(denoiser: Denoiser, device: str) -> Iterator[None]:
-    """Keep one denoiser resident and Turbo-fused for one safe stage."""
-
-    try:
-        denoiser.prepare_on_device(device)
-        _empty_cuda_cache()
-        yield
-    finally:
-        denoiser.model.to("cpu")
-        _empty_cuda_cache()
-
-
 def _bf16_autocast():
     """Match Lightning's ``bf16-mixed`` inference context without Lightning."""
 
@@ -185,7 +170,7 @@ def _denoise_rcp(
     # before the transformer blocks reach their peak allocation.
     pose_feature_batch = pose_features.allocate_group(len(camera_ids), "cpu")
     pose_features.copy_group(tuple(range(len(camera_ids))), pose_feature_batch)
-    null_pose_feature = pose_features.null_on(device)
+    null_pose_feature = pose_features.null_features
 
     with torch.inference_mode(), _bf16_autocast():
         for step_index, _ in enumerate(tqdm(denoiser.scheduler.timesteps, desc=f"RCP 1-to-{len(camera_ids)}")):
@@ -233,7 +218,7 @@ def _denoise_targets_single(
     latents = initial_latents
     source = src_latents.to(dtype=denoiser.dtype, device=device)
     context = context.to(dtype=denoiser.dtype, device=device)
-    null_pose_feature = pose_features.null_on(device)
+    null_pose_feature = pose_features.null_features
     group_size = len(routes[0][0])
     pose_feature_batch = pose_features.allocate_group(group_size, "cpu")
 
@@ -394,20 +379,22 @@ def generate_views(
         target_pose_features = pose_cache.target
         del pose_cache
 
-    with metrics.stage("model_load"):
-        denoiser = (
-            load_denoiser(
-                checkpoint_path=checkpoint_path,
-                turbo_lora_path=turbo_lora_path,
-                profile=denoising_profile,
-                attention_backend=attention_backend,
-            )
-            if plan.needs_primary_denoiser
-            else None
-        )
-        vae = VaeExecutor.load(assets.vae, plan.candidate_devices)
-
+    denoiser = None
+    vae = None
     try:
+        with metrics.stage("model_load"):
+            denoiser = (
+                load_denoiser(
+                    checkpoint_path=checkpoint_path,
+                    turbo_lora_path=turbo_lora_path,
+                    profile=denoising_profile,
+                    attention_backend=attention_backend,
+                )
+                if plan.needs_primary_denoiser
+                else None
+            )
+            vae = VaeExecutor.load(assets.vae, plan.candidate_devices)
+
         with metrics.stage("source_encode"):
             source_video = _channels_last_source_layout(conditioning.load_source_tensor())
             source_latents = vae.encode(source_video)
@@ -418,7 +405,9 @@ def generate_views(
         if plan.view_plan.enable_rcp:
             if denoiser is None or rcp_pose_features is None:
                 raise RuntimeError("RCP requires a primary denoiser and proposal pose features.")
-            with metrics.stage("rcp_denoise"), _denoiser_on_device(denoiser, plan.primary_device):
+            with metrics.stage("rcp_denoise"):
+                denoiser.prepare_on_device(plan.primary_device)
+                _empty_cuda_cache()
                 rcp_latents = _denoise_rcp(
                     denoiser=denoiser,
                     vae=vae,
@@ -430,8 +419,11 @@ def generate_views(
                     device=plan.primary_device,
                 )
                 # Target references use null pose features, not the RCP bank.
-                # Drop its sole owner before the DiT returns to host memory.
                 del rcp_pose_features
+                # Only single-GPU target generation reuses the parent's DiT.
+                if plan.distributed:
+                    denoiser = None
+                _empty_cuda_cache()
             with metrics.stage("rcp_latent_handoff"):
                 target_sources = torch.cat([source_latents, rcp_latents[:4]], dim=0)
             del rcp_latents
@@ -451,8 +443,6 @@ def generate_views(
                 device="cpu",
             )
             if plan.distributed:
-                denoiser = None
-                _empty_cuda_cache()
                 target_latents, parallelism = _denoise_targets_multi_gpu(
                     checkpoint_path=checkpoint_path,
                     turbo_lora_path=turbo_lora_path,
@@ -469,17 +459,20 @@ def generate_views(
             else:
                 if denoiser is None:
                     raise RuntimeError("Single-GPU target generation requires a primary-process denoiser.")
-                with _denoiser_on_device(denoiser, plan.primary_device):
-                    target_latents = _denoise_targets_single(
-                        denoiser=denoiser,
-                        src_latents=target_sources,
-                        context=context,
-                        pose_features=target_pose_features,
-                        initial_latents=initial_latents,
-                        routes=routes,
-                        device=plan.primary_device,
-                    )
+                if not plan.view_plan.enable_rcp:
+                    denoiser.prepare_on_device(plan.primary_device)
+                    _empty_cuda_cache()
+                target_latents = _denoise_targets_single(
+                    denoiser=denoiser,
+                    src_latents=target_sources,
+                    context=context,
+                    pose_features=target_pose_features,
+                    initial_latents=initial_latents,
+                    routes=routes,
+                    device=plan.primary_device,
+                )
                 denoiser = None
+                _empty_cuda_cache()
             del initial_latents
 
         if parallelism is not None:
@@ -513,7 +506,9 @@ def generate_views(
             parallelism=parallelism,
         )
     finally:
-        vae.close()
+        denoiser = None
+        if vae is not None:
+            vae.close()
         _empty_cuda_cache()
 
     return result

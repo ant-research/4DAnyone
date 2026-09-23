@@ -310,6 +310,21 @@ class DiTBlock(nn.Module):
         hidden = gelu_tanh(hidden)
         return self.ffn[2](hidden)
 
+    @staticmethod
+    def _add_residual(x: torch.Tensor, branch: torch.Tensor, gate: torch.Tensor | None = None) -> torch.Tensor:
+        """Update the inference-owned token stream after a branch has consumed it.
+
+        Keep multiplication and addition separate, including their BF16 rounding.
+        Reusing the stream also prevents the caller from retaining an obsolete
+        block input while the FFN creates its much larger hidden activation.
+        """
+
+        if torch.is_grad_enabled():
+            return x + (branch if gate is None else gate * branch)
+        if gate is not None:
+            branch.mul_(gate)
+        return x.add_(branch)
+
     def _multiview_attention(
         self,
         x: torch.Tensor,
@@ -350,27 +365,26 @@ class DiTBlock(nn.Module):
             self.modulation.to(dtype=time_modulation.dtype, device=time_modulation.device) + time_modulation
         ).chunk(6, dim=1)
 
-        x = x + gate_msa * self.self_attn(
-            normalized_modulation(self.norm1, x, shift_msa, scale_msa),
-            spatial_freqs,
+        x = self._add_residual(
+            x,
+            self.self_attn(normalized_modulation(self.norm1, x, shift_msa, scale_msa), spatial_freqs),
+            gate_msa,
         )
 
         shift_mvs, scale_mvs, gate_mvs = (
             self.modulation_mvs.to(dtype=time_modulation.dtype, device=time_modulation.device)
             + time_modulation[:, :3, :]
         ).chunk(3, dim=1)
-        x = x + gate_mvs * self._multiview_attention(
+        x = self._add_residual(
             x,
-            shift_mvs,
-            scale_mvs,
-            multiview_freqs,
-            shape,
+            self._multiview_attention(x, shift_mvs, scale_mvs, multiview_freqs, shape),
+            gate_mvs,
         )
 
-        x = x + self.cross_attn(self.norm3(x), repeat(context, "1 l c -> v l c", v=x.shape[0]))
+        x = self._add_residual(x, self.cross_attn(self.norm3(x), repeat(context, "1 l c -> v l c", v=x.shape[0])))
 
         residual = self._feed_forward(normalized_modulation(self.norm2, x, shift_mlp, scale_mlp))
-        return x + gate_mlp * residual
+        return self._add_residual(x, residual, gate_mlp)
 
 
 class Head(nn.Module):
@@ -543,21 +557,23 @@ class FourDAnyoneDiT(nn.Module):
         return x, packed_views
 
     @staticmethod
-    def _add_target_pose_features_streamed(
+    def _add_pose_bank(
         x: torch.Tensor,
         pose_features: torch.Tensor,
-        target_views: int,
-        grid_size: tuple[int, int, int],
     ) -> None:
-        """Stage one CPU pose feature at a time into patch-token storage."""
+        """Consume a pose bank without keeping it on the GPU during the blocks."""
 
-        frames, height, width = grid_size
+        if pose_features.device == x.device:
+            x.add_(rearrange(pose_features, "v c f h w -> v (f h w) c"))
+            return
+        if pose_features.device.type != "cpu":
+            raise ValueError(f"Inference pose features must be on CPU or {x.device}, got {pose_features.device}.")
         staging = torch.empty(
-            (MODEL_DIM, frames, height, width),
+            pose_features.shape[1:],
             dtype=x.dtype,
             device=x.device,
         )
-        for view_index in range(target_views):
+        for view_index in range(pose_features.shape[0]):
             staging.copy_(pose_features[view_index])
             pose_tokens = rearrange(staging, "c f h w -> (f h w) c")
             x[view_index].add_(pose_tokens)
@@ -578,25 +594,14 @@ class FourDAnyoneDiT(nn.Module):
             raise ValueError(f"Expected pose features {expected_pose}, got {tuple(pose_features.shape)}.")
         if tuple(null_pose_feature.shape) != expected_null:
             raise ValueError(f"Expected null pose features {expected_null}, got {tuple(null_pose_feature.shape)}.")
-        null_tokens = rearrange(null_pose_feature, "v c f h w -> v (f h w) c")
         if torch.is_grad_enabled():
-            if pose_features.device != x.device:
+            if pose_features.device != x.device or null_pose_feature.device != x.device:
                 raise ValueError("Training requires pose features on the same device as patch tokens.")
             pose_tokens = rearrange(pose_features, "v c f h w -> v (f h w) c")
+            null_tokens = rearrange(null_pose_feature, "v c f h w -> v (f h w) c")
             return torch.cat([x[:target_views] + pose_tokens, x[target_views:] + null_tokens], dim=0)
-        if pose_features.device == x.device:
-            pose_tokens = rearrange(pose_features, "v c f h w -> v (f h w) c")
-            x[:target_views].add_(pose_tokens)
-        else:
-            if pose_features.device.type != "cpu":
-                raise ValueError(f"Inference pose features must be on CPU or {x.device}, got {pose_features.device}.")
-            FourDAnyoneDiT._add_target_pose_features_streamed(
-                x,
-                pose_features,
-                target_views,
-                grid_size,
-            )
-        x[target_views:].add_(null_tokens)
+        FourDAnyoneDiT._add_pose_bank(x[:target_views], pose_features)
+        FourDAnyoneDiT._add_pose_bank(x[target_views:], null_pose_feature)
         return x
 
     def forward(

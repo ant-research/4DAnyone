@@ -185,9 +185,6 @@ class PoseFeatureBank:
         for output_index, feature_index in enumerate(indices):
             destination[output_index].copy_(self.features[feature_index])
 
-    def null_on(self, device: str) -> Tensor:
-        return self.null_features.to(device=device)
-
 
 @dataclass(frozen=True)
 class PoseFeatureCache:
@@ -205,7 +202,6 @@ class _PoseEncodingJob:
     skeletons: tuple[SkeletonVideo, ...]
     batch_size: int
     packed_views: int
-    channels_last: bool
     builder: _PoseFeatureBuilder
 
 
@@ -256,7 +252,6 @@ def _pose_jobs(
     skeletons: tuple[SkeletonVideo, ...],
     group_size: int,
     packed_views: int,
-    channels_last: bool,
 ) -> tuple[tuple[_PoseEncodingJob, ...], _PoseFeatureBuilder]:
     """Plan complete fixed-shape calls and their canonical output owner."""
 
@@ -272,7 +267,6 @@ def _pose_jobs(
             skeletons=tuple(skeletons[index] for index in indices),
             batch_size=plan.batch_size,
             packed_views=packed_views,
-            channels_last=channels_last,
             builder=builder,
         )
         for indices in plan.feature_groups
@@ -293,7 +287,7 @@ def _execute_pose_job(
 
     video_shape = None
     batch = None
-    memory_format = torch.channels_last_3d if job.channels_last else torch.contiguous_format
+    prefix = pose_encoder.temporal_prefix
     for batch_index, skeleton in enumerate(job.skeletons):
         LOGGER.info("Loading skeleton conditioning from %s", skeleton.path.name)
         decoded = conditioning.load_skeleton_tensor([skeleton]).to(dtype=torch.bfloat16, device="cpu").contiguous()
@@ -303,16 +297,18 @@ def _execute_pose_job(
         if video_shape is None:
             video_shape = current_shape
             batch = torch.empty(
-                (job.batch_size, *video_shape),
+                (job.batch_size, video_shape[0], video_shape[1] + prefix, *video_shape[2:]),
                 dtype=torch.bfloat16,
                 device=device,
-                memory_format=memory_format,
             ).fill_(-1)
         elif current_shape != video_shape:
             raise FourDAnyoneError(
                 f"Skeleton {skeleton.path} has shape {tuple(decoded.shape)}, expected {(1, *video_shape)}."
             )
-        batch[batch_index].copy_(decoded[0])
+        # Construct the exact contiguous input previously produced by cat in
+        # PoseEncoder. Null slots remain -1, including their temporal prefix.
+        batch[batch_index, :, :prefix].copy_(decoded[0, :, :1])
+        batch[batch_index, :, prefix:].copy_(decoded[0])
         del decoded
 
     encoded = _encode_pose_batch(pose_encoder, batch)
@@ -350,13 +346,11 @@ def build_pose_feature_cache(
             skeletons=conditioning.rcp_skeletons,
             group_size=VIEWS_PER_GROUP,
             packed_views=1,
-            channels_last=True,
         )
     target_jobs, target_builder = _pose_jobs(
         skeletons=conditioning.target_skeletons,
         group_size=VIEWS_PER_GROUP,
         packed_views=2 if view_plan.enable_rcp else 1,
-        channels_last=False,
     )
     jobs = (*rcp_jobs, *target_jobs)
     worker_count = min(len(jobs), len(devices))

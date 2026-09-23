@@ -13,6 +13,8 @@ The research fork revision was not anonymously reachable when the release contra
 
 The reader inference path bounds the temporary FP64 RoPE workspace and reuses PoseEncoder/FFN activation storage when gradients are disabled. These release-specific memory-lifetime changes preserve checkpoint parameter keys and the full-group attention and FFN matrix-multiplication shapes. The offline UMT5 conversion implementation used to generate the frozen prompt asset is development-only and not part of the reader distribution; it retains this license and provenance.
 
+The conditioning builder prepares PoseEncoder's contiguous temporal-prefix input directly. Inference DiT blocks own and update one residual stream; target and null pose banks are consumed before those blocks. VAE causal convolutions centralize compact temporal caches at the autocast input boundary, while completed branch outputs and expanded layouts reuse storage. These changes retain normalization/activation precision and the original temporal chunk boundaries.
+
 To reproduce the retained research sources before pruning:
 
 ```bash

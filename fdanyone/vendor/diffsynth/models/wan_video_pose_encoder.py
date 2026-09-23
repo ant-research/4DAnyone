@@ -9,6 +9,8 @@ from torch.nn import init
 
 
 class PoseEncoder(nn.Module):
+    temporal_prefix = 3
+
     def __init__(self, out_dim=5120, in_channels=3):
         super().__init__()
 
@@ -71,12 +73,11 @@ class PoseEncoder(nn.Module):
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         """
-        x: (B, C, F, H, W) -> latent grid matching the DiT patch tokens.
+        x: contiguous (B, C, F + 3, H, W), with three copies of the first
+        frame prepended by the conditioning input builder. Preparing this
+        final layout directly avoids retaining a second full video batch.
         Wan2.1 uses F/4, H/16, W/16; Wan2.2-TI2V-5B uses F/4, H/32, W/32.
         """
-        # Wan pattern: 1 -> 4 -> 4 -> ...
-        x = torch.cat([x[:, :, :1].repeat(1, 1, 3, 1, 1), x], dim=2)
-
         x = self.conv_layers(x)
         x = self.final_proj(x)
         return x * self.scale
