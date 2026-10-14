@@ -18,16 +18,29 @@ _RETRYABLE_TREE_ERRORS = {getattr(errno, name) for name in ("EBUSY", "ENOTEMPTY"
 
 
 def _open_output_lock(path: Path) -> int:
+    flags = os.O_CREAT | os.O_RDWR
     if os.name == "nt":
-        from fdanyone._windows_lock import open_lock_file
-
-        return open_lock_file(path)
-
-    import fcntl
-
-    descriptor = os.open(path, os.O_CREAT | os.O_RDWR | os.O_NOFOLLOW, 0o666)
+        # Best-effort path check, not the atomic no-follow guarantee used on POSIX.
+        if path.is_symlink():
+            raise OSError(errno.ELOOP, "Output lock must not be a symlink", str(path))
+    else:
+        flags |= os.O_NOFOLLOW
+    descriptor = os.open(path, flags, 0o666)
     try:
-        fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        if os.name == "nt":
+            import msvcrt
+
+            try:
+                # The first byte can be locked even when the sidecar is empty.
+                msvcrt.locking(descriptor, msvcrt.LK_NBLCK, 1)
+            except OSError as exc:
+                if exc.errno in (errno.EACCES, errno.EAGAIN):
+                    raise BlockingIOError(exc.errno, "Output lock is already held", str(path)) from exc
+                raise
+        else:
+            import fcntl
+
+            fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
     except BaseException:
         os.close(descriptor)
         raise
@@ -48,6 +61,7 @@ def lock_output(path: Path):
     Keep the empty lock file outside the output directory and never unlink it: replacing
     its inode could let concurrent writers acquire different locks. The OS
     releases the lock on process exit, including SIGKILL.
+    Windows uses a nonblocking byte-range lock and a best-effort symlink check.
     """
 
     lock_path = path.with_name(f".{path.name}.lock")
