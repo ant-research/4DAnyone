@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import errno
-import fcntl
 import hashlib
 import json
 import os
@@ -15,7 +14,24 @@ from pathlib import Path
 
 from fdanyone.errors import FourDAnyoneError
 
-_RETRYABLE_TREE_ERRORS = {errno.EBUSY, errno.ENOTEMPTY, errno.ESTALE}
+_RETRYABLE_TREE_ERRORS = {getattr(errno, name) for name in ("EBUSY", "ENOTEMPTY", "ESTALE") if hasattr(errno, name)}
+
+
+def _open_output_lock(path: Path) -> int:
+    if os.name == "nt":
+        from fdanyone._windows_lock import open_lock_file
+
+        return open_lock_file(path)
+
+    import fcntl
+
+    descriptor = os.open(path, os.O_CREAT | os.O_RDWR | os.O_NOFOLLOW, 0o666)
+    try:
+        fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except BaseException:
+        os.close(descriptor)
+        raise
+    return descriptor
 
 
 def resolve_output_path(path: str | Path) -> Path:
@@ -35,12 +51,11 @@ def lock_output(path: Path):
     """
 
     lock_path = path.with_name(f".{path.name}.lock")
-    descriptor = os.open(lock_path, os.O_CREAT | os.O_RDWR | os.O_NOFOLLOW, 0o666)
     try:
-        try:
-            fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
-        except BlockingIOError as exc:
-            raise FourDAnyoneError(f"Another inference run is using {path}.") from exc
+        descriptor = _open_output_lock(lock_path)
+    except BlockingIOError as exc:
+        raise FourDAnyoneError(f"Another inference run is using {path}.") from exc
+    try:
         yield
     finally:
         os.close(descriptor)
