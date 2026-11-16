@@ -13,16 +13,7 @@ pip install --no-build-isolation -r requirements-4dgs.txt
 
 ## Usage
 
-Generate multi-view videos from the released **Pexels Fashion** example:
-
-```bash
-python inference.py \
-    --video_path "data/source/pexels/10331522-uhd_2160_4096_25fps.mp4" \
-    --output_dir "data/4danyone/pexels/10331522-uhd_2160_4096_25fps" \
-    --views_per_layer 24
-```
-
-Train 4DGS from the generated views and render a video:
+Train a 4DGS model using the 4DAnyone inference results:
 
 ```bash
 python reconstruct.py \
@@ -30,9 +21,7 @@ python reconstruct.py \
     --output_dir "data/4dgs/pexels/10331522-uhd_2160_4096_25fps"
 ```
 
-Use your actual inference output directory for `--data_dir`; GUI-created tasks may include a timestamp subdirectory.
-
-Output directory:
+After training, the following outputs are available:
 
 ```text
 data/4dgs/pexels/10331522-uhd_2160_4096_25fps/
