@@ -22,7 +22,7 @@ GVHMR permits use, copying, modification, and distribution for educational, rese
 - Upstream code: <https://github.com/ZhengPeng7/BiRefNet>
 - License: MIT, copied at `third_party/licenses/BIREFNET_LICENSE`
 
-The adaptive preprocessing path downloads the pinned BiRefNet configuration, inference source, and weights on demand. It uses the resulting foreground masks for source cropping and source-framing analysis. Those downloaded files retain their upstream terms.
+4DAnyone downloads the pinned BiRefNet configuration, inference source, and weights on demand. The same model supplies foreground masks for source preprocessing, Nerfstudio export, and 4DGS preparation. Those downloaded files retain their upstream terms.
 
 ## PyTorch3D compatibility subset
 
@@ -68,6 +68,12 @@ No Sapiens2 model weights are distributed by this repository.
 
 The retained schema material is conservatively treated as Sapiens2-derived and the complete agreement is included rather than assuming that the root Apache-2.0 license applies. The agreement contains explicit prohibited-use terms, including surveillance, biometric processing, identification or re-identification, deepfakes or deceptive content, and the other activities listed in section 1(b)(vi).
 
+## 4D Gaussian reconstruction
+
+- Method: [4D Gaussian Splatting](https://github.com/LogosIntelligenceLab/4d-gaussian-splatting) (Fudan Zhang Vision Group). Apart from the Adam kernel below, `fdanyone/reconstruction` is a first-party implementation under the root license.
+- Elementwise Adam kernel: `fdanyone/reconstruction/cuda/adam.cuh`, adapted from [`easyvolcap/utils/src/fused_adam.cu`](https://github.com/zju3dv/EasyVolcap/blob/9e5ef5e1098d8a0c7e47c45f593b752b31b2e82c/easyvolcap/utils/src/fused_adam.cu) in EasyVolcap (3D Vision Group, Zhejiang University). That revision is MIT-licensed; the license is copied at `fdanyone/reconstruction/cuda/LICENSE.adam`. Later EasyVolcap revisions use different terms.
+- Rasterization: [gsplat](https://github.com/nerfstudio-project/gsplat), installed by `requirements-4dgs.txt`, Apache-2.0
+
 ## Model and body assets
 
 The 4DAnyone checkpoint and sanitized MHR70 sparse regression tensors are first-party release artifacts licensed under Apache-2.0, published at the Hugging Face revision frozen in `fdanyone/assets.py`. The regressor file also embeds the exact keypoint-name order required to interpret those tensors. That schema material retains the Sapiens2 notice above and is not relicensed by the tensor license. The Wan VAE and UMT5-derived frozen prompt conditioning, GVHMR checkpoints, HMR2, ViTPose, detector weights, and SMPL-X body models remain third-party assets. The redistributable files are mirrored by the companion Hugging Face repository. Users obtain SMPL-X from its official site and remain responsible for every applicable license.
@@ -89,4 +95,4 @@ That regressor was trained by the 4DAnyone project on DNA-Rendering frames, usin
 - MatConvNet distribution: [imagenet-vgg-verydeep-19](https://www.vlfeat.org/matconvnet/pretrained/), source MD5 `106118b7cf60435e6d8e04f6a6dc3657`
 - Model license: [Creative Commons Attribution 4.0 International](https://creativecommons.org/licenses/by/4.0/)
 
-The optional `splatfacto-perceptual` method uses a custom pixel-plus-feature objective rather than standard LPIPS. The companion Hugging Face repository contains a modified copy of the VGG-19 model: MatConvNet filters are transposed into PyTorch layout and serialized as safetensors, while the unused classifier and final two convolution layers are omitted. The retained tensor values are otherwise unchanged. Credit remains with Karen Simonyan and Andrew Zisserman. Users must preserve that attribution and the CC BY 4.0 license when redistributing the converted weights.
+The optional `splatfacto-perceptual` method and the default delayed feature loss of 4DGS training use a custom objective with these weights rather than standard LPIPS. The companion Hugging Face repository contains a modified copy of the VGG-19 model: MatConvNet filters are transposed into PyTorch layout and serialized as safetensors, while the unused classifier and final two convolution layers are omitted. The retained tensor values are otherwise unchanged. Credit remains with Karen Simonyan and Andrew Zisserman. Users must preserve that attribution and the CC BY 4.0 license when redistributing the converted weights.

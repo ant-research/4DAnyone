@@ -1,0 +1,41 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>4DAnyone Viewer</title><link rel="stylesheet" href="assets/viewer.css?v=unified-controls-2"></head>
+<body>
+<main class="player">
+  <div id="stage" tabindex="0" aria-label="Scene: drag to orbit, right-drag to pan, scroll to zoom"><canvas id="canvas"></canvas></div>
+  <div id="overlay" role="status"><span class="spinner"></span><h2>Loading scene</h2><p>Preparing the first frame…</p><button id="reconnect" hidden>Reconnect</button></div>
+  <section class="player-controls" aria-label="Playback controls">
+    <label class="sr-only" for="timeline">Timeline</label><input id="timeline" type="range" min="0" max="0" value="0" step="1">
+    <div class="control-row">
+      <div class="playback-controls">
+      <button id="play" class="icon-button" aria-label="Play" title="Play / pause (Space)"><svg class="play-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M7 4v16l13-8Z"/></svg><svg class="pause-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 4h4v16H6zm8 0h4v16h-4z"/></svg></button>
+      <div class="time-display"><span id="time">0:00</span><span class="separator">/</span><span id="duration">0:00</span></div>
+      </div>
+      <div class="view-controls">
+      <div class="choice-control speed-control" id="speed-control">
+        <button id="speed" class="choice-trigger" type="button" value="1" aria-label="Playback speed: 1×" aria-haspopup="menu" aria-expanded="false" aria-controls="speed-menu" title="Playback speed"><span id="speed-label">1×</span><svg class="select-chevron" viewBox="0 0 16 16" aria-hidden="true"><path d="m4 6 4 4 4-4"/></svg></button>
+        <div id="speed-menu" class="choice-menu" role="menu" aria-label="Playback speed" hidden>
+          <button type="button" role="menuitemradio" aria-checked="false" tabindex="-1" data-speed="0.25" data-value="0.25">0.25×</button>
+          <button type="button" role="menuitemradio" aria-checked="false" tabindex="-1" data-speed="0.5" data-value="0.5">0.5×</button>
+          <button type="button" role="menuitemradio" aria-checked="true" tabindex="-1" data-speed="1" data-value="1">1×</button>
+          <button type="button" role="menuitemradio" aria-checked="false" tabindex="-1" data-speed="2" data-value="2">2×</button>
+          <button type="button" role="menuitemradio" aria-checked="false" tabindex="-1" data-speed="4" data-value="4">4×</button>
+        </div>
+      </div>
+      <div class="choice-control background-control" id="background-control">
+        <button id="background" class="choice-trigger" type="button" value="black" aria-label="Background: Black" aria-haspopup="menu" aria-expanded="false" aria-controls="background-menu" title="Background"><span class="background-swatch" aria-hidden="true"></span><span id="background-label">Black</span><svg class="select-chevron" viewBox="0 0 16 16" aria-hidden="true"><path d="m4 6 4 4 4-4"/></svg></button>
+        <div id="background-menu" class="choice-menu" role="menu" aria-label="Background" hidden>
+          <button type="button" role="menuitemradio" aria-checked="true" tabindex="-1" data-background="black" data-value="black">Black</button>
+          <button type="button" role="menuitemradio" aria-checked="false" tabindex="-1" data-background="gray" data-value="gray">Gray</button>
+          <button type="button" role="menuitemradio" aria-checked="false" tabindex="-1" data-background="white" data-value="white">White</button>
+        </div>
+      </div>
+      <details id="help-menu" class="help-menu"><summary aria-label="Controls" title="Controls"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M9.5 8.5a2.5 2.5 0 0 1 5 .5c0 2-2.5 2-2.5 4M12 16.5v.1"/></svg></summary><div class="help-panel"><h2>Controls</h2><dl><div><dt>Drag</dt><dd>Orbit</dd></div><div><dt>Right drag</dt><dd>Pan</dd></div><div><dt>Scroll</dt><dd>Zoom</dd></div><div><dt>Space</dt><dd>Play / pause</dd></div><div><dt>← / →</dt><dd>Step frame</dd></div><div><dt>R</dt><dd>Reset view</dd></div></dl></div></details>
+      <span class="viewer-brand" aria-label="4DAnyone">4DAnyone</span>
+      </div>
+    </div>
+  </section>
+</main>
+<script type="module" src="assets/viewer.js?v=cas-1"></script>
+</body></html>

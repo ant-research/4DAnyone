@@ -13,13 +13,10 @@
 
 ## News
 
-> [!note]
-> We're actively improving 4DAnyone. We recommend using the latest code.
-
+- **2026-11-16**: Added **4DGS reconstruction** and an **interactive web viewer**. See the [4DGS guide](docs/4dgs.md).
 - **2026-09-16**: Released a **GUI** for interactive inference and visualization.
 - **2026-09-05**: Reduced peak GPU memory below **24 GB**, enabling inference on consumer GPUs (RTX 4090).
 - **2026-09-02**: Released **4DAnyone-Turbo**, achieving a **5.58×** denoising speedup over 4DAnyone-Base.
-- **2026-08-28**: Achieved a **1.42×** end-to-end speedup and reduced peak GPU memory below **32 GB**.
 
 ## Installation
 
@@ -158,7 +155,7 @@ python app.py \
     --server_port 7860
 ```
 
-Open http://127.0.0.1:7860 in your browser. For a remote GPU server, first forward the port from your local computer:
+Open http://127.0.0.1:7860/ in your browser. For a remote GPU server, first forward the port from your local computer:
 
 ```bash
 ssh -N -L 7860:127.0.0.1:7860 user@gpu-host
@@ -168,9 +165,9 @@ https://github.com/user-attachments/assets/a51ec078-2970-4a37-9061-104211e1618d
 
 ## Reconstruction
 
-For 3DGS reconstruction, see the [nerfstudio guide](docs/nerfstudio.md).
+We provide a compact 4DGS training and viewer implementation. See the [4DGS guide](docs/4dgs.md) for details. Here are some training results:
 
-We will integrate an open-source 4DGS reconstruction method. Stay tuned!
+<p align="center"><img src="docs/assets/reconstruction.gif" width="100%" alt="4DGS reconstruction results for six scenes"></p>
 
 ## Citation
 

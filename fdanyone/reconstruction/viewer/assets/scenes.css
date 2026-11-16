@@ -1,0 +1,26 @@
+@import url("viewer.css");
+
+.scenes{max-width:880px;margin:0 auto;padding:32px 24px 64px}
+.scene-header{display:flex;align-items:center;justify-content:space-between;gap:24px;padding-bottom:48px}
+.scene-header .viewer-brand{position:static;font-size:20px;line-height:32px}
+.scene-refresh{display:inline-flex;align-items:center;justify-content:center;min-height:44px;padding:0 18px;
+  border:1px solid var(--control-border);border-radius:999px;background:var(--control-bg);color:inherit;text-decoration:none}
+.scene-heading{display:flex;align-items:center;justify-content:space-between;gap:24px;margin-bottom:24px}
+.scene-heading h1{margin:0;font-size:28px;line-height:1.3;font-weight:700;letter-spacing:-.5px}
+.scene-heading p,.scene-count{color:#aaaab2;font-size:14px;line-height:1.5}
+.scene-heading p{margin:8px 0 0}.scene-count{flex-shrink:0}
+.scene-list{display:grid;gap:12px;list-style:none;margin:0;padding:0}
+.scene-card{display:flex;align-items:center;justify-content:space-between;gap:24px;min-height:80px;padding:20px 24px;
+  border:1px solid var(--control-border);border-radius:12px;background:var(--control-bg);color:inherit;text-decoration:none}
+.scene-title{font-size:16px;line-height:1.5;overflow-wrap:anywhere;min-width:0}
+.scene-action{flex-shrink:0;color:var(--blue);font-size:14px;line-height:1.5}
+.scene-action span{margin-left:8px}.scene-card[aria-disabled=true] .scene-action{color:#aaaab2}
+.scene-card:focus-visible,.scene-refresh:focus-visible{outline:2px solid #9fc5ff;outline-offset:4px}
+.scene-empty{padding:40px 24px;border:1px solid var(--control-border);border-radius:12px;background:var(--control-bg)}
+.scene-empty p{margin:0;font-size:16px;line-height:1.5}.scene-empty p+p{margin-top:8px;color:#aaaab2;font-size:14px}
+@media(hover:hover){a.scene-card:hover,.scene-refresh:hover{background:#ffffff20;border-color:#ffffff50}}
+@media(max-width:600px){
+  .scenes{padding:24px 16px 40px}.scene-header{padding-bottom:32px}.scene-heading{gap:16px}
+  .scene-heading h1{font-size:24px}.scene-card{padding:16px;gap:16px}.scene-action{font-size:13px}
+}
+@media(max-width:380px){.scene-card{align-items:flex-start;flex-direction:column;gap:8px}}
