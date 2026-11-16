@@ -17,7 +17,7 @@ Run the exporter in the 4DAnyone inference environment:
 ```bash
 conda activate 4danyone
 python scripts/export_nerfstudio.py \
-    --data_dir data/fdanyone/pexels/2785536-uhd_2160_3840_25fps \
+    --data_dir data/4danyone/pexels/2785536-uhd_2160_3840_25fps \
     --output_dir data/ns_data/pexels/2785536-uhd_2160_3840_25fps/frame_000 \
     --frame_index 0
 ```

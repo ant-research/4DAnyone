@@ -50,7 +50,7 @@ PROGRESS.propagate = False
 def _resolve_output_dir(output_dir: str | None, video_path: str) -> Path:
     """Resolve the output directory without following its final path component."""
 
-    target = Path("data/fdanyone") / Path(video_path).stem if output_dir is None else Path(output_dir)
+    target = Path("data/4danyone") / Path(video_path).stem if output_dir is None else Path(output_dir)
     return resolve_output_path(target)
 
 

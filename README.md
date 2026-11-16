@@ -60,7 +60,7 @@ A compact 360° layout for basic coverage. Start here for an initial test.
 ```bash
 python inference.py \
     --video_path "data/source/pexels/2785536-uhd_2160_3840_25fps.mp4" \
-    --output_dir "data/fdanyone/pexels/2785536-uhd_2160_3840_25fps" \
+    --output_dir "data/4danyone/pexels/2785536-uhd_2160_3840_25fps" \
     --views_per_layer 6
 ```
 
@@ -73,7 +73,7 @@ A dense 360° layout with broad angular coverage, suitable for 4DGS reconstructi
 ```bash
 python inference.py \
     --video_path "data/source/pexels/2785536-uhd_2160_3840_25fps.mp4" \
-    --output_dir "data/fdanyone/pexels/2785536-uhd_2160_3840_25fps" \
+    --output_dir "data/4danyone/pexels/2785536-uhd_2160_3840_25fps" \
     --views_per_layer 24
 ```
 
@@ -86,7 +86,7 @@ This layout distributes views across three pitch rings for broader coverage, ena
 ```bash
 python inference.py \
     --video_path "data/source/pexels/2785536-uhd_2160_3840_25fps.mp4" \
-    --output_dir "data/fdanyone/pexels/2785536-uhd_2160_3840_25fps" \
+    --output_dir "data/4danyone/pexels/2785536-uhd_2160_3840_25fps" \
     --views_per_layer 16 --layer_pitches '[-10,15,35]'
 ```
 
@@ -99,7 +99,7 @@ A two-layer layout for dense coverage across the frontal 180° arc.
 ```bash
 python inference.py \
     --video_path "data/source/pexels/2785536-uhd_2160_3840_25fps.mp4" \
-    --output_dir "data/fdanyone/pexels/2785536-uhd_2160_3840_25fps" \
+    --output_dir "data/4danyone/pexels/2785536-uhd_2160_3840_25fps" \
     --views_per_layer 12 --layer_pitches '[0,30]' --start_yaw -90 --yaw_span 180
 ```
 
@@ -142,7 +142,7 @@ Pass an existing output directory to view inference results:
 
 ```bash
 python app.py \
-    --output_dir "data/fdanyone/pexels/2785536-uhd_2160_3840_25fps" \
+    --output_dir "data/4danyone/pexels/2785536-uhd_2160_3840_25fps" \
     --server_port 7860
 ```
 
@@ -151,7 +151,7 @@ Choose a source video and a new output directory to run inference:
 ```bash
 python app.py \
     --video_path "data/source/pexels/2785536-uhd_2160_3840_25fps.mp4" \
-    --output_dir "data/fdanyone/pexels/2785536-uhd_2160_3840_25fps" \
+    --output_dir "data/4danyone/pexels/2785536-uhd_2160_3840_25fps" \
     --server_port 7860
 ```
 
