@@ -107,8 +107,6 @@ python inference.py \
 
 ### Output Structure
 
-Without `--output_dir`, CLI results go to `data/4danyone/<clip>`.
-
 ```bash
 <clip>/                           # input filename without its extension
 ├── metadata.json                 # run settings, timings, resources
