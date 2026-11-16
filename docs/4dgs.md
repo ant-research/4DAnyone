@@ -64,14 +64,14 @@ ssh -N -L 7861:127.0.0.1:7861 <gpu-server>
 
 <table>
   <tr>
-    <td align="center" width="33%"><strong>Wusan 2</strong><br><video src="https://github.com/user-attachments/assets/c37f73ba-d402-4337-b6b9-c366c30c272c" width="240" controls muted></video><br><a href="https://huggingface.co/AntResearch/4DAnyone/resolve/main/data/4dgs/examples/wusan-2.npz?download=true">Download NPZ</a></td>
-    <td align="center" width="33%"><strong>Pexels Fashion</strong><br><video src="https://github.com/user-attachments/assets/d3d971dd-77db-4c02-941b-33c11a3b1354" width="240" controls muted></video><br><a href="https://huggingface.co/AntResearch/4DAnyone/resolve/main/data/4dgs/examples/pexels-fashion.npz?download=true">Download NPZ</a></td>
-    <td align="center" width="33%"><strong>Zhang Weili</strong><br><video src="https://github.com/user-attachments/assets/528fc72d-9093-4600-b922-97320dd14018" width="240" controls muted></video><br><a href="https://huggingface.co/AntResearch/4DAnyone/resolve/main/data/4dgs/examples/zhang-weili.npz?download=true">Download NPZ</a></td>
+    <td align="center" width="33%"><video src="https://github.com/user-attachments/assets/c37f73ba-d402-4337-b6b9-c366c30c272c" width="240" controls muted></video><a href="https://huggingface.co/AntResearch/4DAnyone/resolve/main/data/4dgs/examples/wusan-2.npz?download=true">Download NPZ</a></td>
+    <td align="center" width="33%"><video src="https://github.com/user-attachments/assets/d3d971dd-77db-4c02-941b-33c11a3b1354" width="240" controls muted></video><a href="https://huggingface.co/AntResearch/4DAnyone/resolve/main/data/4dgs/examples/pexels-fashion.npz?download=true">Download NPZ</a></td>
+    <td align="center" width="33%"><video src="https://github.com/user-attachments/assets/528fc72d-9093-4600-b922-97320dd14018" width="240" controls muted></video><a href="https://huggingface.co/AntResearch/4DAnyone/resolve/main/data/4dgs/examples/zhang-weili.npz?download=true">Download NPZ</a></td>
   </tr>
   <tr>
-    <td align="center" width="33%"><strong>Chris</strong><br><video src="https://github.com/user-attachments/assets/d97c65d8-d554-413c-9bc9-2b5447645135" width="240" controls muted></video><br><a href="https://huggingface.co/AntResearch/4DAnyone/resolve/main/data/4dgs/examples/chris.npz?download=true">Download NPZ</a></td>
-    <td align="center" width="33%"><strong>EngineAI T800</strong><br><video src="https://github.com/user-attachments/assets/0d3df05a-95d3-4b1e-af30-800c88ed3118" width="240" controls muted></video><br><a href="https://huggingface.co/AntResearch/4DAnyone/resolve/main/data/4dgs/examples/engineai-t800.npz?download=true">Download NPZ</a></td>
-    <td align="center" width="33%"><strong>RobotAmu</strong><br><video src="https://github.com/user-attachments/assets/ffd6963d-b2c4-46de-8798-4077e36c1631" width="240" controls muted></video><br><a href="https://huggingface.co/AntResearch/4DAnyone/resolve/main/data/4dgs/examples/robotamu.npz?download=true">Download NPZ</a></td>
+    <td align="center" width="33%"><video src="https://github.com/user-attachments/assets/d97c65d8-d554-413c-9bc9-2b5447645135" width="240" controls muted></video><a href="https://huggingface.co/AntResearch/4DAnyone/resolve/main/data/4dgs/examples/chris.npz?download=true">Download NPZ</a></td>
+    <td align="center" width="33%"><video src="https://github.com/user-attachments/assets/0d3df05a-95d3-4b1e-af30-800c88ed3118" width="240" controls muted></video><a href="https://huggingface.co/AntResearch/4DAnyone/resolve/main/data/4dgs/examples/engineai-t800.npz?download=true">Download NPZ</a></td>
+    <td align="center" width="33%"><video src="https://github.com/user-attachments/assets/ffd6963d-b2c4-46de-8798-4077e36c1631" width="240" controls muted></video><a href="https://huggingface.co/AntResearch/4DAnyone/resolve/main/data/4dgs/examples/robotamu.npz?download=true">Download NPZ</a></td>
   </tr>
 </table>
 
