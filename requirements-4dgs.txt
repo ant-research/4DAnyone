@@ -1,0 +1,12 @@
+# Additions to the existing 4DAnyone environment (requirements.txt).
+# Shared libraries, including torch and mask inference, stay with the base install.
+packaging
+ninja
+# Stable gsplat v1.5.3 rasterization.
+gsplat @ git+https://github.com/nerfstudio-project/gsplat.git@937e29912570c372bed6747a5c9bf85fed877bae
+# Browser viewer transport.
+fastapi
+starlette>=1.0.1,<2
+uvicorn>=0.54,<1
+websockets>=16,<17
+httpx>=0.28,<1

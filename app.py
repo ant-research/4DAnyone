@@ -2,12 +2,12 @@
 
 from __future__ import annotations
 
-import atexit
 import os
 import signal
 import sys
 
 from fdanyone.attention import validate_attention_backend
+from fdanyone.cli import check_arguments
 from fdanyone.errors import ConfigurationError, FourDAnyoneError
 from fdanyone.space.task import SpaceConfig, repository_path, resolve_task
 
@@ -63,15 +63,12 @@ def _serve(config: SpaceConfig, *, server_name: str, server_port: int) -> None:
     # Set this before importing Gradio, which initializes its upload cache.
     os.environ.setdefault("GRADIO_TEMP_DIR", str(cache_dir / "gradio"))
     try:
-        from fdanyone.space.jobs import JobManager
-        from fdanyone.space.theme import CSS, THEME
-        from fdanyone.space.ui import build_space
+        from fdanyone.space.server import create_app
+        from fdanyone.web import serve
     except ImportError as exc:
         raise SystemExit(
             f"GUI dependency unavailable: {exc}. Install requirements.txt and requirements-gui.txt."
         ) from exc
-    manager = JobManager(config)
-    atexit.register(manager.close)
 
     def shutdown(_signum, _frame):
         raise SystemExit(0)
@@ -79,19 +76,9 @@ def _serve(config: SpaceConfig, *, server_name: str, server_port: int) -> None:
     previous_sigterm = signal.signal(signal.SIGTERM, shutdown)
     try:
         print(f"Output Directory: {config.output_dir}", flush=True)
-        space = build_space(manager)
-        space.queue(default_concurrency_limit=8, max_size=32).launch(
-            server_name=server_name,
-            server_port=server_port,
-            ssr_mode=False,
-            css=CSS,
-            theme=THEME,
-            allowed_paths=[str(config.cache_dir)],
-            max_file_size="500mb",
-            show_error=True,
-        )
+        app = create_app(config, server_name=server_name, server_port=server_port)
+        serve(app, host=server_name, port=server_port)
     finally:
-        manager.close()
         signal.signal(signal.SIGTERM, previous_sigterm)
 
 
@@ -99,7 +86,14 @@ def main() -> None:
     from fire import Fire
 
     try:
-        Fire(launch)
+        args = sys.argv[1:]
+        if any(arg in ("--help", "-h") for arg in args):
+            args = ["--help"]
+        else:
+            check_arguments(launch, args)
+        Fire(launch, command=args)
+    except KeyboardInterrupt:
+        pass
     except FourDAnyoneError as exc:
         message = " ".join(line.strip() for line in str(exc).splitlines())
         print(f"error: {message}", file=sys.stderr)

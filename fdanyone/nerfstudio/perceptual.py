@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import warnings
 from collections.abc import Mapping
 from contextlib import AbstractContextManager, nullcontext
+from functools import cache
 from pathlib import Path
 
 import torch
@@ -38,6 +40,21 @@ PERCEPTUAL_FEATURE_DIVISORS = (2.6, 4.8, 3.7, 5.6, 0.15)
 PERCEPTUAL_COMPUTE_DTYPES = ("float32", "bfloat16")
 
 
+@cache
+def _supports_bfloat16(device_index: int) -> bool:
+    # Check the tensor's GPU, and do not mistake BF16 emulation for native support.
+    with torch.cuda.device(device_index):
+        supported = torch.cuda.is_bf16_supported(including_emulation=False)
+    if not supported:
+        warnings.warn(
+            f"CUDA device {device_index} does not support native bfloat16; "
+            "falling back to float32 for the perceptual loss.",
+            RuntimeWarning,
+            stacklevel=2,
+        )
+    return supported
+
+
 def _autocast_context(compute_dtype: str, device: torch.device) -> AbstractContextManager:
     if compute_dtype not in PERCEPTUAL_COMPUTE_DTYPES:
         choices = ", ".join(PERCEPTUAL_COMPUTE_DTYPES)
@@ -46,8 +63,10 @@ def _autocast_context(compute_dtype: str, device: torch.device) -> AbstractConte
         return nullcontext()
     if device.type != "cuda":
         raise RuntimeError("bfloat16 perceptual computation currently requires CUDA.")
-    if not torch.cuda.is_bf16_supported():
-        raise RuntimeError("This CUDA device does not support bfloat16 convolution.")
+    device_index = device.index if device.index is not None else torch.cuda.current_device()
+    if not _supports_bfloat16(device_index):
+        # Override any surrounding mixed-precision context as well.
+        return torch.autocast(device_type="cuda", enabled=False)
     return torch.autocast(device_type="cuda", dtype=torch.bfloat16)
 
 
@@ -127,28 +146,32 @@ def perceptual_distance(
     target: torch.Tensor,
     prediction_features: tuple[torch.Tensor, ...],
     target_features: tuple[torch.Tensor, ...],
+    *,
+    include_rgb: bool = True,
 ) -> torch.Tensor:
     """Apply the reference pixel/feature weighting to scaled images."""
 
     if len(prediction_features) != 5 or len(target_features) != 5:
         raise ValueError("The perceptual loss requires exactly five VGG feature tensors.")
-    terms = [torch.mean(torch.abs(target - prediction))]
+    terms = [torch.mean(torch.abs(target - prediction))] if include_rgb else []
     terms.extend(
         torch.mean(torch.abs(target_features[index] - prediction_features[index])) / divisor
         for index, divisor in enumerate(PERCEPTUAL_FEATURE_DIVISORS)
     )
-    return torch.stack(terms).sum() / 255.0
+    # Removing the FP32 RGB term must not turn the feature sum into a BF16 reduction.
+    return torch.stack(terms).to(prediction.dtype).sum() / 255.0
 
 
 class VGG19PerceptualLoss(nn.Module):
     """The reconstruction objective's VGG-19 loss, not standard LPIPS."""
 
-    def __init__(self, weights_path: str | Path, compute_dtype: str = "float32") -> None:
+    def __init__(self, weights_path: str | Path, compute_dtype: str = "float32", *, include_rgb: bool = True) -> None:
         super().__init__()
         if compute_dtype not in PERCEPTUAL_COMPUTE_DTYPES:
             choices = ", ".join(PERCEPTUAL_COMPUTE_DTYPES)
             raise ValueError(f"perceptual compute dtype must be one of: {choices}.")
         self.compute_dtype = compute_dtype
+        self.include_rgb = include_rgb
         self.features = MatConvNetVGG19Features(weights_path)
         self.register_buffer(
             "imagenet_mean",
@@ -170,4 +193,5 @@ class VGG19PerceptualLoss(nn.Module):
             target_scaled,
             prediction_features,
             target_features,
+            include_rgb=self.include_rgb,
         )

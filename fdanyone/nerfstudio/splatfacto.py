@@ -24,7 +24,7 @@ class PerceptualSplatfactoModelConfig(SplatfactoModelConfig):
     perceptual_weights_path: Path = Path("models") / PERCEPTUAL_VGG19
     """Safetensors converted from the official MatConvNet VGG-19 model."""
     perceptual_compute_dtype: str = "float32"
-    """VGG convolution dtype: float32 for parity or bfloat16 for speed."""
+    """VGG convolution dtype: float32 or bfloat16 with FP32 fallback on unsupported GPUs."""
 
 
 class PerceptualSplatfactoModel(SplatfactoModel):
