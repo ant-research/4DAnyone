@@ -64,7 +64,7 @@ def resolve_task(video_path: str | Path | None, output_dir: str | Path | None) -
     source = repository_path(video_path).resolve() if video_path is not None else None
     if output_dir is None:
         stem = re.sub(r"[^\w-]", "_", source.stem)[:60] or "clip"
-        output_dir = Path("data/fdanyone") / stem / f"{datetime.now():%Y%m%d-%H%M%S}-{uuid.uuid4().hex[:6]}"
+        output_dir = Path("data/4danyone") / stem / f"{datetime.now():%Y%m%d-%H%M%S}-{uuid.uuid4().hex[:6]}"
     destination = resolve_output_path(repository_path(output_dir))
     if source is not None:
         ensure_new_output(destination)

@@ -13,16 +13,29 @@ pip install --no-build-isolation -r requirements-4dgs.txt
 
 ## Usage
 
-Train 4DGS from your 4DAnyone result and render a video:
+Generate multi-view videos from the released **Pexels Fashion** example:
 
 ```bash
-python reconstruct.py --data_dir "<4danyone_output_dir>" --output_dir "<4dgs_output_dir>"
+python inference.py \
+    --video_path "data/source/pexels/10331522-uhd_2160_4096_25fps.mp4" \
+    --output_dir "data/4danyone/pexels/10331522-uhd_2160_4096_25fps" \
+    --views_per_layer 24
 ```
+
+Train 4DGS from the generated views and render a video:
+
+```bash
+python reconstruct.py \
+    --data_dir "data/4danyone/pexels/10331522-uhd_2160_4096_25fps" \
+    --output_dir "data/4dgs/pexels/10331522-uhd_2160_4096_25fps"
+```
+
+Use your actual inference output directory for `--data_dir`; GUI-created tasks may include a timestamp subdirectory.
 
 Output directory:
 
 ```text
-<4dgs_output_dir>/
+data/4dgs/pexels/10331522-uhd_2160_4096_25fps/
 ├── render/
 │   ├── rgb.mp4          # 360° orbit video
 │   ├── alpha/           # per-frame alpha masks
@@ -48,7 +61,7 @@ Load the trained NPZ model:
 
 ```bash
 python reconstruct.py view \
-    --model "<4dgs_output_dir>/checkpoints/latest.npz"
+    --model "data/4dgs/pexels/10331522-uhd_2160_4096_25fps/checkpoints/latest.npz"
 ```
 
 Open **http://127.0.0.1:7861/** and select a scene.
@@ -62,14 +75,14 @@ ssh -N -L 7861:127.0.0.1:7861 <gpu-server>
 
 <table>
   <tr>
-    <td align="center" width="33%"><strong>Wusan 2</strong><br><video src="https://github.com/user-attachments/assets/c37f73ba-d402-4337-b6b9-c366c30c272c" width="240" controls muted></video></td>
-    <td align="center" width="33%"><strong>Pexels Fashion</strong><br><video src="https://github.com/user-attachments/assets/d3d971dd-77db-4c02-941b-33c11a3b1354" width="240" controls muted></video></td>
-    <td align="center" width="33%"><strong>Zhang Weili</strong><br><video src="https://github.com/user-attachments/assets/528fc72d-9093-4600-b922-97320dd14018" width="240" controls muted></video></td>
+    <td align="center" width="33%"><strong>Wusan 2</strong><br><video src="https://github.com/user-attachments/assets/c37f73ba-d402-4337-b6b9-c366c30c272c" width="240" controls muted></video><br><a href="https://huggingface.co/AntResearch/4DAnyone/resolve/main/data/4dgs/examples/wusan-2.npz?download=true">Download NPZ</a></td>
+    <td align="center" width="33%"><strong>Pexels Fashion</strong><br><video src="https://github.com/user-attachments/assets/d3d971dd-77db-4c02-941b-33c11a3b1354" width="240" controls muted></video><br><a href="https://huggingface.co/AntResearch/4DAnyone/resolve/main/data/4dgs/examples/pexels-fashion.npz?download=true">Download NPZ</a></td>
+    <td align="center" width="33%"><strong>Zhang Weili</strong><br><video src="https://github.com/user-attachments/assets/528fc72d-9093-4600-b922-97320dd14018" width="240" controls muted></video><br><a href="https://huggingface.co/AntResearch/4DAnyone/resolve/main/data/4dgs/examples/zhang-weili.npz?download=true">Download NPZ</a></td>
   </tr>
   <tr>
-    <td align="center" width="33%"><strong>Chris</strong><br><video src="https://github.com/user-attachments/assets/d97c65d8-d554-413c-9bc9-2b5447645135" width="240" controls muted></video></td>
-    <td align="center" width="33%"><strong>EngineAI T800</strong><br><video src="https://github.com/user-attachments/assets/0d3df05a-95d3-4b1e-af30-800c88ed3118" width="240" controls muted></video></td>
-    <td align="center" width="33%"><strong>RobotAmu</strong><br><video src="https://github.com/user-attachments/assets/ffd6963d-b2c4-46de-8798-4077e36c1631" width="240" controls muted></video></td>
+    <td align="center" width="33%"><strong>Chris</strong><br><video src="https://github.com/user-attachments/assets/d97c65d8-d554-413c-9bc9-2b5447645135" width="240" controls muted></video><br><a href="https://huggingface.co/AntResearch/4DAnyone/resolve/main/data/4dgs/examples/chris.npz?download=true">Download NPZ</a></td>
+    <td align="center" width="33%"><strong>EngineAI T800</strong><br><video src="https://github.com/user-attachments/assets/0d3df05a-95d3-4b1e-af30-800c88ed3118" width="240" controls muted></video><br><a href="https://huggingface.co/AntResearch/4DAnyone/resolve/main/data/4dgs/examples/engineai-t800.npz?download=true">Download NPZ</a></td>
+    <td align="center" width="33%"><strong>RobotAmu</strong><br><video src="https://github.com/user-attachments/assets/ffd6963d-b2c4-46de-8798-4077e36c1631" width="240" controls muted></video><br><a href="https://huggingface.co/AntResearch/4DAnyone/resolve/main/data/4dgs/examples/robotamu.npz?download=true">Download NPZ</a></td>
   </tr>
 </table>
 
@@ -98,7 +111,7 @@ Render another video from a trained model:
 
 ```bash
 python reconstruct.py render \
-    --model "<4dgs_output_dir>/checkpoints/latest.npz" \
+    --model "data/4dgs/pexels/10331522-uhd_2160_4096_25fps/checkpoints/latest.npz" \
     --output "<render_output_dir>"
 ```
 

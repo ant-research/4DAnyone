@@ -33,7 +33,7 @@ def inference(
 
     Args:
         video_path: Input video; it must contain at least 121 usable frames.
-        output_dir: Output directory for this clip. Defaults to data/fdanyone/<clip>.
+        output_dir: Output directory for this clip. Defaults to data/4danyone/<clip>.
         views_per_layer: Number of evenly spaced yaw views at each pitch.
             Total views (this number times the layer count) must be divisible by 6.
         layer_pitches: Camera pitch for each layer in degrees, for example

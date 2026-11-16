@@ -30,7 +30,7 @@ def launch(
     Args:
         video_path: Source video for a new task.
         output_dir: Task result directory. Omit video_path to view or resume it.
-            New tasks default to a new directory under data/fdanyone/<clip>/.
+            New tasks default to a new directory under data/4danyone/<clip>/.
         model_dir: Model root; missing public checkpoints download here.
         gvhmr_root: Path to the GVHMR source checkout.
         cache_dir: Logs, body geometry, and scene recordings.
