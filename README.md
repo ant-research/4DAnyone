@@ -108,7 +108,6 @@ python inference.py \
 ### Output Structure
 
 Without `--output_dir`, CLI results go to `data/4danyone/<clip>`.
-To reuse results created under the previous `data/fdanyone/` directory, pass their existing path explicitly with `--output_dir`.
 
 ```bash
 <clip>/                           # input filename without its extension
