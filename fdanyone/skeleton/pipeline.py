@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import logging
 from collections.abc import Iterable
-from contextlib import contextmanager
+from contextlib import closing, contextmanager
 from dataclasses import asdict, dataclass, replace
 from pathlib import Path
 
@@ -13,8 +13,8 @@ import numpy as np
 
 from fdanyone.assets import BIREFNET_REPO_ID, BIREFNET_REVISION
 from fdanyone.config import CAMERA, CROP, FOREGROUND, INFERENCE, SKELETON, CameraConfig
-from fdanyone.errors import AssetError, FourDAnyoneError
-from fdanyone.foreground import predict_foreground_masks
+from fdanyone.errors import AssetError, FourDAnyoneError, VideoContractError
+from fdanyone.foreground import iter_foreground_masks, predict_foreground_masks
 from fdanyone.geometry.cameras import (
     CAMERA_FRAME,
     WORLD_FRAME,
@@ -32,14 +32,14 @@ from fdanyone.motion.result import MotionResult
 from fdanyone.skeleton.keypoints import KEYPOINT_NAMES
 from fdanyone.skeleton.renderer import estimate_body_height, projected_body_scales, render_goliath40
 from fdanyone.vendor.pytorch3d_compat import install_if_needed as install_pytorch3d_compat
-from fdanyone.video import CanonicalClip, iter_rgb_video, write_lossless_video, write_video
+from fdanyone.video import CanonicalClip, decode_canonical_clip, iter_rgb_video, write_lossless_video, write_video
 from fdanyone.views import ViewPlan
 
 LOGGER = logging.getLogger("fdanyone")
 
 
 @dataclass(frozen=True)
-class SkeletonVideo:
+class ConditioningVideo:
     path: Path
     crop: Crop
 
@@ -49,17 +49,22 @@ class Conditioning:
     root: Path
     source_video: Path
     source_crop: Crop
-    target_skeletons: tuple[SkeletonVideo, ...]
-    rcp_skeletons: tuple[SkeletonVideo, ...]
+    target_skeletons: tuple[ConditioningVideo, ...]
+    rcp_skeletons: tuple[ConditioningVideo, ...]
     view_plan: ViewPlan
     fps_num: int
     fps_den: int
     num_frames: int
+    reference_videos: tuple[ConditioningVideo, ...] = ()
+
+    def load_reference_tensor(self, index: int):
+        video = self.reference_videos[index]
+        return _video_tensor(video.path, self.num_frames, crop=video.crop)
 
     def load_source_tensor(self):
         return _video_tensor(self.source_video, self.num_frames, crop=self.source_crop)
 
-    def load_skeleton_tensor(self, skeletons: Iterable[SkeletonVideo]):
+    def load_skeleton_tensor(self, skeletons: Iterable[ConditioningVideo]):
         import torch
 
         videos = [_video_tensor(item.path, self.num_frames, crop=item.crop) for item in skeletons]
@@ -90,16 +95,21 @@ class Conditioning:
         if [int(record["camera_id"]) for record in rcp_records] != list(view_plan.rcp_camera_ids):
             raise FourDAnyoneError("RCP conditioning cameras do not match the resolved view plan.")
 
-        def skeletons(camera_records: list[dict]) -> tuple[SkeletonVideo, ...]:
+        def skeletons(camera_records: list[dict]) -> tuple[ConditioningVideo, ...]:
             return tuple(
-                SkeletonVideo(root / record["skeleton_video"], Crop(**record["crop"])) for record in camera_records
+                ConditioningVideo(root / record["skeleton_video"], Crop(**record["crop"])) for record in camera_records
             )
 
+        reference_videos = tuple(
+            ConditioningVideo(root / item["video"], Crop(**item["crop"])) for item in metadata.get("references", [])
+        )
+        if len(reference_videos) != view_plan.external_reference_count:
+            raise FourDAnyoneError("Conditioning reference count does not match the view plan.")
         target_skeletons = skeletons(records)
         rcp_skeletons = skeletons(rcp_records)
         required = (
             root / metadata["source_video"],
-            *(item.path for item in (*target_skeletons, *rcp_skeletons)),
+            *(item.path for item in (*target_skeletons, *rcp_skeletons, *reference_videos)),
         )
         missing = [str(path) for path in required if not path.is_file()]
         if missing:
@@ -114,6 +124,7 @@ class Conditioning:
             fps_num=int(metadata["fps_num"]),
             fps_den=int(metadata["fps_den"]),
             num_frames=int(metadata["num_frames"]),
+            reference_videos=reference_videos,
         )
 
 
@@ -332,6 +343,44 @@ def _resized_camera(camera: Camera, image_height: int, image_width: int) -> Came
     )
 
 
+def _foreground_crop(masks: np.ndarray) -> Crop:
+    height, width = masks.shape[-2:]
+    return crop_from_bounds(
+        bounds=mask_bounds(masks, CROP.mask_threshold),
+        image_height=height,
+        image_width=width,
+        output_height=INFERENCE.height,
+        output_width=INFERENCE.width,
+        margins=CROP.margins,
+        allow_upscale=CROP.allow_upscale,
+    )
+
+
+def _prepare_references(
+    paths: tuple[Path, ...], clip: CanonicalClip, root: Path, foreground_model: str | Path, device: str
+) -> tuple[tuple[ConditioningVideo, ...], list[dict]]:
+    """Sample each camera on the source clock and fit one crop for its entire clip."""
+    videos, records = [], []
+    for index, path in enumerate(paths):
+        LOGGER.info("Preparing reference %d/%d: %s", index + 1, len(paths), path.name)
+        try:
+            reference = decode_canonical_clip(
+                path, num_frames=len(clip.frames), start_time=float(clip.start_time), fps=clip.fps
+            )
+        except VideoContractError as exc:
+            raise VideoContractError(f"Reference {index + 1} ({path.name}): {exc}") from exc
+        union = np.zeros((reference.height, reference.width), dtype=np.uint8)
+        with closing(iter_foreground_masks(reference.rgb_frames, foreground_model, device)) as masks:
+            for mask in masks:
+                np.maximum(union, mask, out=union)
+        crop = _foreground_crop(union)
+        video = write_lossless_video(reference, root / f"reference-{index:02d}.mkv")
+        videos.append(ConditioningVideo(video, crop))
+        records.append({"video": video.name, "crop": asdict(crop), "clip": reference.metadata()})
+        del reference, union
+    return tuple(videos), records
+
+
 def build_skeleton_conditioning(
     *,
     motion: MotionResult,
@@ -342,12 +391,17 @@ def build_skeleton_conditioning(
     output_dir: str | Path,
     device: str,
     view_plan: ViewPlan,
+    reference_video_paths: tuple[Path, ...] = (),
 ) -> Conditioning:
     """Build source, RCP, and target conditioning on one camera grid."""
 
     gvhmr_root, _ = validate_gvhmr(gvhmr_root)
     root = Path(output_dir).expanduser().resolve()
     root.mkdir(parents=True, exist_ok=True)
+
+    references, reference_records = _prepare_references(
+        reference_video_paths, clip, root, foreground_model_path, device
+    )
 
     LOGGER.info("Estimating source foreground masks with BiRefNet")
     masks = predict_foreground_masks(clip.rgb_frames, foreground_model_path, device)
@@ -425,15 +479,7 @@ def build_skeleton_conditioning(
         yaw_span=view_plan.yaw_span,
     )
 
-    source_crop = crop_from_bounds(
-        bounds=mask_bounds(masks, CROP.mask_threshold),
-        image_height=clip.height,
-        image_width=clip.width,
-        output_height=INFERENCE.height,
-        output_width=INFERENCE.width,
-        margins=CROP.margins,
-        allow_upscale=CROP.allow_upscale,
-    )
+    source_crop = _foreground_crop(masks)
     target_crop = center_crop(clip.height, clip.width, INFERENCE.height, INFERENCE.width)
     source_video = write_lossless_video(clip, root / "source.mkv")
     skeleton_root = root / "goliath40"
@@ -553,6 +599,7 @@ def build_skeleton_conditioning(
             "fps_num": clip.fps_num,
             "fps_den": clip.fps_den,
             "source_video": source_video.name,
+            "references": reference_records,
             "source_crop": asdict(source_crop),
             "source_crop_policy": {
                 "subject": "fmask",
@@ -583,10 +630,11 @@ def build_skeleton_conditioning(
         root=root,
         source_video=source_video,
         source_crop=source_crop,
-        target_skeletons=tuple(SkeletonVideo(path, target_crop) for path in target_paths),
-        rcp_skeletons=tuple(SkeletonVideo(path, target_crop) for path in rcp_paths),
+        target_skeletons=tuple(ConditioningVideo(path, target_crop) for path in target_paths),
+        rcp_skeletons=tuple(ConditioningVideo(path, target_crop) for path in rcp_paths),
         view_plan=view_plan,
         fps_num=clip.fps_num,
         fps_den=clip.fps_den,
         num_frames=motion.num_frames,
+        reference_videos=references,
     )

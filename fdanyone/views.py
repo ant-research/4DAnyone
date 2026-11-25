@@ -12,8 +12,10 @@ VIEWS_PER_GROUP = 6
 MIN_PITCH = -15
 MAX_PITCH = 45
 
-# RCP generates six canonical proposal cameras; the first four become target references.
+# RCP proposals on the front-first 24-camera ring: yaw 60, 135, 210, 285, 0 and 180 degrees.
+# Single-video runs use the first four; partial references are filled back first, then sides.
 RCP_CAMERA_ORDER = (4, 9, 14, 19, 0, 12)
+RCP_FILL_PRIORITY = (12, 19, 4)
 
 
 @dataclass(frozen=True)
@@ -36,6 +38,11 @@ class ViewPlan:
     yaw_span: int
     enable_rcp: bool
     enable_tcr: bool
+    external_reference_count: int = 0
+
+    @property
+    def target_packed_views(self) -> int:
+        return 2 if self.enable_rcp or self.external_reference_count else 1
 
     @property
     def num_layers(self) -> int:
@@ -72,6 +79,16 @@ class ViewPlan:
         return RCP_CAMERA_ORDER if self.enable_rcp else ()
 
     @property
+    def rcp_reference_indices(self) -> tuple[int, ...]:
+        """Indices of proposal latents that fill the remaining target reference slots."""
+        if not self.enable_rcp:
+            return ()
+        if not self.external_reference_count:
+            return tuple(range(4))
+        cameras = RCP_FILL_PRIORITY[: 4 - self.external_reference_count]
+        return tuple(RCP_CAMERA_ORDER.index(camera) for camera in cameras)
+
+    @property
     def is_canonical_target_ring(self) -> bool:
         return (
             self.views_per_layer == CAMERA.count
@@ -88,6 +105,7 @@ class ViewPlan:
             "yaw_span": self.yaw_span,
             "enable_rcp": self.enable_rcp,
             "enable_tcr": self.enable_tcr,
+            **({"external_reference_count": self.external_reference_count} if self.external_reference_count else {}),
         }
 
     @classmethod
@@ -102,6 +120,7 @@ class ViewPlan:
                 yaw_span=value["yaw_span"],
                 enable_rcp=value["enable_rcp"],
                 enable_tcr=value["enable_tcr"],
+                external_reference_count=value.get("external_reference_count", 0),
             )
         except KeyError as exc:
             raise ConfigurationError(f"View plan is missing {exc.args[0]!r}.") from None
@@ -135,6 +154,7 @@ def resolve_view_plan(
     yaw_span: int = 360,
     enable_rcp: bool = True,
     enable_tcr: bool = True,
+    external_reference_count: int = 0,
 ) -> ViewPlan:
     """Validate the compact CLI settings before expensive work starts."""
 
@@ -155,8 +175,13 @@ def resolve_view_plan(
     if not isinstance(enable_tcr, bool):
         raise ConfigurationError(f"enable_tcr must be True or False, got {enable_tcr!r}.")
 
-    # One target group is generated directly, without proposal views.
-    rcp_active = enable_rcp and total_views > VIEWS_PER_GROUP
+    external_reference_count = _integer("external_reference_count", external_reference_count)
+    if not 0 <= external_reference_count <= 4:
+        raise ConfigurationError("external_reference_count must be between 0 and 4.")
+    if external_reference_count:
+        rcp_active = external_reference_count < 4
+    else:
+        rcp_active = enable_rcp and total_views > VIEWS_PER_GROUP
     return ViewPlan(
         views_per_layer=views_per_layer,
         layer_pitches=pitches,
@@ -164,4 +189,5 @@ def resolve_view_plan(
         yaw_span=yaw_span,
         enable_rcp=rcp_active,
         enable_tcr=enable_tcr,
+        external_reference_count=external_reference_count,
     )

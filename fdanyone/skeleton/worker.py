@@ -27,6 +27,7 @@ def main(request_path: str) -> None:
         output_dir=request["output_dir"],
         device=device,
         view_plan=ViewPlan.from_dict(request["view_plan"]),
+        reference_video_paths=tuple(Path(path) for path in request["reference_video_paths"]),
     )
 
 

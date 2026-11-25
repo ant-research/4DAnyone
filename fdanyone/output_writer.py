@@ -162,6 +162,9 @@ def write_output(
             "num_frames": clip.num_frames,
             "width": clip.width,
             "height": clip.height,
+            "references": [
+                {"crop": item["crop"], **item["clip"]} for item in conditioning_metadata.get("references", [])
+            ],
         },
         "motion": {
             "method": "GVHMR",

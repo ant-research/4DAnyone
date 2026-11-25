@@ -31,6 +31,7 @@ class SpaceConfig:
     gpu_ids: tuple[int, ...] | None = None
     attention_backend: str = "auto"
     video_path: Path | None = None
+    reference_video_paths: tuple[Path, ...] = ()
 
 
 def repository_path(value: str | Path) -> Path:
@@ -101,10 +102,11 @@ class SavedTask:
     complete: bool
     error: str = ""
     log_dir: Path | None = None
+    references_available: bool = True
 
     @property
     def resumable(self) -> bool:
-        return not self.complete and not self.error and self.source is not None
+        return not self.complete and not self.error and self.source is not None and self.references_available
 
 
 def read_task(directory: Path, cache_dir: Path) -> SavedTask:
@@ -126,6 +128,13 @@ def read_task(directory: Path, cache_dir: Path) -> SavedTask:
         # An invalid published result requires repair, not another inference run.
         if (directory / "metadata.json").exists():
             error = str(exc)
+    references_available = (
+        complete
+        or bool(error)
+        or all(
+            source_matches(Path(identity["path"]), identity, cache_dir) for identity in request.get("references", [])
+        )
+    )
     return SavedTask(
         directory,
         options,
@@ -133,4 +142,5 @@ def read_task(directory: Path, cache_dir: Path) -> SavedTask:
         complete,
         error,
         Path(request["space_job"]) if request.get("space_job") else None,
+        references_available,
     )

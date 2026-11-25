@@ -30,7 +30,10 @@ DESCRIPTIONS = {
     ),
     "Attention": "Auto selects a suitable attention backend for your GPUs.",
     "Turbo Model": "Use 4DAnyone-Turbo for faster generation. Turn this off to use the Base model.",
-    "RCP": "Use shared reference views to improve appearance consistency across generated views.",
+    "RCP": (
+        "Generate reference views for single-video inputs with more than six target views. "
+        "With 1–3 reference videos, RCP fills the remaining views automatically. Four references skip RCP."
+    ),
     "TCR": "Share context between view groups to improve structural consistency across generated views.",
     "GPUs": (
         "Select one or more CUDA GPUs for inference. All available GPUs are selected by default. "
@@ -42,6 +45,8 @@ HELP_JS = Path(__file__).with_name("assets").joinpath("help.js").read_text()
 
 def option_label(label: str, *, context: str = "edit") -> str:
     """Native popovers keep click-away, Escape and keyboard focus in the browser."""
+    if label not in DESCRIPTIONS:
+        return html.escape(label)
     identifier = f"help-{context}-{label.lower().replace(' ', '-').replace('.', '')}"
     text = html.escape(label)
     return (

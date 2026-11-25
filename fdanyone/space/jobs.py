@@ -79,8 +79,13 @@ class JobManager:
 
     def __init__(self, config: SpaceConfig):
         if config.video_path is None:
-            source = Path(saved_request(config.output_dir)["options"]["video_path"])
-            config = replace(config, video_path=source)
+            # A saved task restores its inputs, so deleting and rerunning it keeps the references.
+            options = saved_request(config.output_dir)["options"]
+            config = replace(
+                config,
+                video_path=Path(options["video_path"]),
+                reference_video_paths=tuple(Path(path) for path in options.get("reference_video_paths") or ()),
+            )
         self.config = config
         self.revision = 0
         self.job: Job | None = None
@@ -125,6 +130,8 @@ class JobManager:
                 protected = [
                     REPOSITORY,
                     self.config.video_path,
+                    *self.config.reference_video_paths,
+                    *(Path(path) for path in record.options["reference_video_paths"] or []),
                     self.config.cache_dir,
                     self.config.model_dir,
                     self.config.gvhmr_root,
@@ -135,7 +142,9 @@ class JobManager:
                     ),
                 ]
                 if any(path.resolve().is_relative_to(output) for path in protected):
-                    raise ConfigurationError("Cannot delete an output folder containing source, models, code or cache.")
+                    raise ConfigurationError(
+                        "Cannot delete an output folder containing input videos, models, code or cache."
+                    )
                 self.previews.discard_all(wait=True)
                 remove_tree(output)
                 self.job = None
