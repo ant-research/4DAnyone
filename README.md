@@ -110,9 +110,11 @@ python inference.py \
 In addition to the source video, 4DAnyone accepts 1–4 synchronized reference videos of the same performance that provide appearance constraints from other angles.
 
 ```bash
-python inference.py --video_path source.mp4 \
+python inference.py \
+    --video_path "source.mp4" \
     --reference_video_paths '["ref1.mp4", "ref2.mp4", "ref3.mp4", "ref4.mp4"]' \
-    --output_dir data/4danyone/sparse --views_per_layer 24
+    --output_dir "data/4danyone/sparse" \
+    --views_per_layer 24
 ```
 
 ### Output Structure
