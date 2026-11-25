@@ -26,7 +26,8 @@ from fdanyone.assets import (
 from fdanyone.config import BASE24, INFERENCE, RANK64_DELTA4
 from fdanyone.device import CUDA_ALLOCATOR_CONF, select_cuda_devices
 from fdanyone.download import ensure_example_video, ensure_models, ensure_smplx
-from fdanyone.errors import ConfigurationError
+from fdanyone.errors import ConfigurationError, FourDAnyoneError
+from fdanyone.inputs import normalize_reference_paths, validate_input_files
 from fdanyone.io import remove_tree, resolve_output_path, write_json
 from fdanyone.motion.gvhmr import validate_gvhmr
 from fdanyone.motion.result import MotionResult
@@ -141,6 +142,7 @@ def _build_conditioning(
     gvhmr_root: Path,
     device: str,
     worker_python: str,
+    reference_video_paths: tuple[Path, ...] = (),
 ):
     from fdanyone.skeleton.pipeline import Conditioning
 
@@ -157,6 +159,7 @@ def _build_conditioning(
             "output_dir": str(output_dir),
             "device": device,
             "view_plan": view_plan.to_dict(),
+            "reference_video_paths": [str(path) for path in reference_video_paths],
         },
     )
     try:
@@ -172,7 +175,10 @@ def _build_conditioning(
         )
     finally:
         request_path.unlink(missing_ok=True)
-    return Conditioning.load(output_dir)
+    conditioning = Conditioning.load(output_dir)
+    if conditioning.view_plan != view_plan:
+        raise FourDAnyoneError("Conditioning view plan does not match the requested view plan.")
+    return conditioning
 
 
 def run_pipeline(
@@ -195,10 +201,12 @@ def run_pipeline(
     enable_rcp: bool,
     enable_tcr: bool,
     enable_turbo: bool,
+    reference_video_paths: list[str] | None = None,
 ) -> dict:
     """Execute inference for one clip, retaining reusable motion."""
 
     request_options = locals().copy()
+    references = normalize_reference_paths(reference_video_paths)
     pipeline_started = time.monotonic()
     logging.basicConfig(level=logging.INFO, format="%(asctime)s | %(levelname)s | %(message)s")
     PROGRESS.info("Checking input and settings", extra={"fraction": 0.02})
@@ -214,6 +222,7 @@ def run_pipeline(
         yaw_span=yaw_span,
         enable_rcp=enable_rcp,
         enable_tcr=enable_tcr,
+        external_reference_count=len(references),
     )
     canonical_fps = validate_clip_options(
         start_time=start_time,
@@ -238,6 +247,9 @@ def run_pipeline(
 
     PROGRESS.info("Preparing model assets", extra={"fraction": 0.05})
     ensure_example_video(video_path)
+    validate_input_files(video_path, references)
+    if references:
+        LOGGER.info("Using %d input videos; RCP %s", 1 + len(references), "on" if view_plan.enable_rcp else "off")
     # Resolve the licensed body model before starting the much larger public
     # model download. Interactive use continues automatically after setup;
     # background jobs receive an actionable error instead of hanging.
@@ -314,6 +326,7 @@ def run_pipeline(
             conditioning = _build_conditioning(
                 working_video=working_video,
                 clip_metadata=clip_metadata,
+                reference_video_paths=references,
                 motion_result_dir=output.motion_dir,
                 view_plan=view_plan,
                 output_dir=scratch / "conditioning",

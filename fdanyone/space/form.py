@@ -21,7 +21,7 @@ from fdanyone.space.controls import (
 )
 from fdanyone.space.gpus import available_gpus
 from fdanyone.space.help import option_label
-from fdanyone.space.settings import complete_options, layout_options, make_options, validate_options
+from fdanyone.space.settings import complete_options, layout_options, make_options, options_view_plan, validate_options
 from fdanyone.space.source import ClipTiming
 from fdanyone.space.task import SavedTask, SpaceConfig
 from fdanyone.views import MAX_PITCH, MIN_PITCH
@@ -43,7 +43,12 @@ class InferenceForm:
         timing = ClipTiming.read(config.video_path)
         self.start_max = timing.start_max("auto") if timing else 0
         self.defaults = complete_options(
-            dict(views_per_layer=6, gpu_ids=config.gpu_ids, attention_backend=config.attention_backend)
+            dict(
+                views_per_layer=6,
+                enable_rcp=len(config.reference_video_paths) < 4,
+                gpu_ids=config.gpu_ids,
+                attention_backend=config.attention_backend,
+            )
         )
         self.fields = {}
 
@@ -188,6 +193,7 @@ class InferenceForm:
         )
         options.update(
             gpu_ids=None if values["gpu_ids"] == self.gpus else values["gpu_ids"],
+            reference_video_paths=[str(path) for path in self.config.reference_video_paths] or None,
             target_fps="auto",
             **{name: values[name] for name in ("enable_rcp", "enable_tcr", "attention_backend")},
             model_dir=str(self.config.model_dir),
@@ -201,6 +207,8 @@ class InferenceForm:
         detail = task.error if task else ""
         if task and not task.complete and task.source is None:
             detail = "Original Source Video Unavailable Or Changed"
+        if task and not task.complete and not task.references_available:
+            detail = "Original Reference Videos Unavailable Or Changed"
         updates = {
             self.note: gr.update(value=html.escape(detail), visible=bool(detail)),
             self.panel: gr.update(visible=not locked),
@@ -226,6 +234,7 @@ class InferenceForm:
             }
             for name, component in self.fields.items()
         }
+        props["enable_rcp"]["interactive"] = interactive and not self.config.reference_video_paths
         props["start_time"].update(
             maximum=max(self.start_max, values["start_time"]),
             interactive=interactive and self.start_max > 0,
@@ -253,9 +262,13 @@ class InferenceForm:
         model = [
             ("Attention", ATTENTION_LABELS[options["attention_backend"]]),
             ("Turbo Model", "On" if options["enable_turbo"] else "Off"),
-            ("RCP", "On" if options["enable_rcp"] else "Off"),
+            ("RCP", "On" if options_view_plan(options).enable_rcp else "Off"),
             ("TCR", "On" if options["enable_tcr"] else "Off"),
         ]
+        references = options["reference_video_paths"] or []
+        model.append(("Input Videos", 1 + len(references)))
+        for index, path in enumerate(references):
+            model.append((f"Reference {index + 1}", path))
         total = options["views_per_layer"] * len(pitches)
         return (
             '<section class="saved-section"><div class="section-heading"><h3>Camera Layout</h3>'

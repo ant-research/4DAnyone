@@ -18,7 +18,7 @@ from fdanyone.views import VIEWS_PER_GROUP
 if TYPE_CHECKING:
     from torch import Tensor
 
-    from fdanyone.skeleton.pipeline import Conditioning, SkeletonVideo
+    from fdanyone.skeleton.pipeline import Conditioning, ConditioningVideo
 
 LOGGER = logging.getLogger("fdanyone")
 
@@ -199,7 +199,7 @@ class _PoseEncodingJob:
     """One complete fixed-shape PoseEncoder call."""
 
     feature_indices: tuple[int, ...]
-    skeletons: tuple[SkeletonVideo, ...]
+    skeletons: tuple[ConditioningVideo, ...]
     batch_size: int
     packed_views: int
     builder: _PoseFeatureBuilder
@@ -249,7 +249,7 @@ def _encode_pose_batch(pose_encoder, videos):
 
 def _pose_jobs(
     *,
-    skeletons: tuple[SkeletonVideo, ...],
+    skeletons: tuple[ConditioningVideo, ...],
     group_size: int,
     packed_views: int,
 ) -> tuple[tuple[_PoseEncodingJob, ...], _PoseFeatureBuilder]:
@@ -350,7 +350,7 @@ def build_pose_feature_cache(
     target_jobs, target_builder = _pose_jobs(
         skeletons=conditioning.target_skeletons,
         group_size=VIEWS_PER_GROUP,
-        packed_views=2 if view_plan.enable_rcp else 1,
+        packed_views=view_plan.target_packed_views,
     )
     jobs = (*rcp_jobs, *target_jobs)
     worker_count = min(len(jobs), len(devices))

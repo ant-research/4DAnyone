@@ -105,6 +105,16 @@ python inference.py \
 
 <p align="left"><img src="docs/assets/inference-24-views-front-180.jpg" width="450" alt="Twenty-four target cameras distributed over two pitch layers along the frontal 180-degree arc"></p>
 
+### Sparse-View Video Input
+
+In addition to the source video, 4DAnyone accepts 1–4 synchronized reference videos of the same performance that provide appearance constraints from other angles.
+
+```bash
+python inference.py --video_path source.mp4 \
+    --reference_video_paths '["ref1.mp4", "ref2.mp4", "ref3.mp4", "ref4.mp4"]' \
+    --output_dir data/4danyone/sparse --views_per_layer 24
+```
+
 ### Output Structure
 
 ```bash
@@ -152,6 +162,16 @@ Choose a source video and a new output directory to run inference:
 python app.py \
     --video_path "data/source/pexels/2785536-uhd_2160_3840_25fps.mp4" \
     --output_dir "data/4danyone/pexels/2785536-uhd_2160_3840_25fps" \
+    --server_port 7860
+```
+
+For sparse-view input, add `--reference_video_paths`:
+
+```bash
+python app.py \
+    --video_path "source.mp4" \
+    --reference_video_paths '["ref1.mp4", "ref2.mp4", "ref3.mp4", "ref4.mp4"]' \
+    --output_dir "data/4danyone/sparse" \
     --server_port 7860
 ```
 

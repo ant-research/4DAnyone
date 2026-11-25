@@ -1,4 +1,4 @@
-"""Run 4DAnyone inference from a monocular video."""
+"""Run 4DAnyone inference from a source video and optional synchronized references."""
 
 from __future__ import annotations
 
@@ -28,8 +28,9 @@ def inference(
     target_fps: str | int | float = "auto",
     start_time: float = 0.0,
     seed: int = 42,
+    reference_video_paths: list[str] | None = None,
 ) -> dict:
-    """Generate synchronized target-view videos from one monocular video.
+    """Generate synchronized target-view videos from a source and optional reference videos.
 
     Args:
         video_path: Input video; it must contain at least 121 usable frames.
@@ -42,7 +43,8 @@ def inference(
         start_yaw: First yaw in every layer, in degrees; 0 faces the person.
         yaw_span: Angular range sampled by each layer, from 1 to 360 degrees.
             The end angle is excluded so a full ring never duplicates a view.
-        enable_rcp: Use six proposal views before generating more than six targets.
+        enable_rcp: Use proposals for single-video input with more than six targets.
+            Reference videos set RCP automatically.
         enable_tcr: Shift view groups cyclically between denoising steps.
         enable_turbo: Whether to use 4DAnyone-Turbo for accelerated denoising.
             Disable it to use the base 4DAnyone model.
@@ -59,6 +61,7 @@ def inference(
             to 24, 25, or 30 FPS; a positive number requests an explicit FPS.
         start_time: Clip start time on the input timeline, in seconds.
         seed: Random seed shared by proposal and target generation.
+        reference_video_paths: Optional list of 1–4 synchronized appearance-reference videos.
     """
 
     # This must run before the first model/PyTorch import. It protects the
@@ -73,6 +76,7 @@ def inference(
 
     return run_pipeline(
         video_path=video_path,
+        reference_video_paths=reference_video_paths,
         output_dir=output_dir,
         views_per_layer=views_per_layer,
         layer_pitches=layer_pitches,

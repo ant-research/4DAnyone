@@ -7,7 +7,7 @@ import math
 from pathlib import Path
 
 from fdanyone.errors import ConfigurationError
-from fdanyone.views import resolve_view_plan
+from fdanyone.views import ViewPlan, resolve_view_plan
 
 
 def complete_options(options: dict) -> dict:
@@ -21,25 +21,25 @@ def complete_options(options: dict) -> dict:
     return {**defaults, **options}
 
 
+def options_view_plan(options: dict) -> ViewPlan:
+    return resolve_view_plan(
+        external_reference_count=len(options["reference_video_paths"] or []),
+        views_per_layer=options["views_per_layer"],
+        layer_pitches=options["layer_pitches"],
+        start_yaw=options["start_yaw"],
+        yaw_span=options["yaw_span"],
+        enable_rcp=options["enable_rcp"],
+        enable_tcr=options["enable_tcr"],
+    )
+
+
 def validate_options(options: dict) -> None:
     """Apply the CLI camera grouping and clip contracts before submission."""
 
     from fdanyone.video import validate_clip_options
 
     options = complete_options(options)
-    resolve_view_plan(
-        **{
-            key: options[key]
-            for key in (
-                "views_per_layer",
-                "layer_pitches",
-                "start_yaw",
-                "yaw_span",
-                "enable_rcp",
-                "enable_tcr",
-            )
-        }
-    )
+    options_view_plan(options)
     fps = options["target_fps"]
     validate_clip_options(start_time=options["start_time"], fps=None if str(fps).lower() == "auto" else fps)
 

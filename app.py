@@ -9,6 +9,7 @@ import sys
 from fdanyone.attention import validate_attention_backend
 from fdanyone.cli import check_arguments
 from fdanyone.errors import ConfigurationError, FourDAnyoneError
+from fdanyone.inputs import normalize_reference_paths, validate_input_files
 from fdanyone.space.task import SpaceConfig, repository_path, resolve_task
 
 
@@ -22,6 +23,7 @@ def launch(
     attention_backend: str = "auto",
     server_name: str = "127.0.0.1",
     server_port: int = 7860,
+    reference_video_paths: list[str] | None = None,
 ) -> None:
     """Launch 4DAnyone Space for interactive inference and visualization.
 
@@ -29,6 +31,7 @@ def launch(
 
     Args:
         video_path: Source video for a new task.
+        reference_video_paths: Optional list of 1–4 synchronized appearance-reference videos for a new task.
         output_dir: Task result directory. Omit video_path to view or resume it.
             New tasks default to a new directory under data/4danyone/<clip>/.
         model_dir: Model root; missing public checkpoints download here.
@@ -44,6 +47,11 @@ def launch(
     if isinstance(server_port, bool) or not isinstance(server_port, int) or not 1 <= server_port <= 65535:
         raise ConfigurationError("server_port must be an integer from 1 to 65535.")
     video_path, output_dir = resolve_task(video_path, output_dir)
+    references = normalize_reference_paths(reference_video_paths, base_dir=repository_path("."))
+    if references:
+        if video_path is None:
+            raise ConfigurationError("Open saved tasks with --output_dir only; their references are saved already.")
+        validate_input_files(video_path, references)
     config = SpaceConfig(
         output_dir=output_dir,
         cache_dir=repository_path(cache_dir).resolve(),
@@ -52,6 +60,7 @@ def launch(
         gpu_ids=tuple(gpu_ids) if gpu_ids is not None else None,
         attention_backend=attention_backend,
         video_path=video_path,
+        reference_video_paths=references,
     )
     _serve(config, server_name=server_name, server_port=server_port)
 

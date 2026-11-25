@@ -401,7 +401,15 @@ def generate_views(
             del source_video
         _merge_view_stage_peak(metrics, "source_encode", vae)
 
-        target_sources = source_latents
+        references = []
+        if plan.view_plan.external_reference_count:
+            with metrics.stage("reference_encode"):
+                for index in range(plan.view_plan.external_reference_count):
+                    video = _channels_last_source_layout(conditioning.load_reference_tensor(index))
+                    references.append(vae.encode(video))
+                    del video
+                    _merge_view_stage_peak(metrics, "reference_encode", vae)
+
         if plan.view_plan.enable_rcp:
             if denoiser is None or rcp_pose_features is None:
                 raise RuntimeError("RCP requires a primary denoiser and proposal pose features.")
@@ -425,9 +433,10 @@ def generate_views(
                     denoiser = None
                 _empty_cuda_cache()
             with metrics.stage("rcp_latent_handoff"):
-                target_sources = torch.cat([source_latents, rcp_latents[:4]], dim=0)
+                references.append(rcp_latents[list(plan.view_plan.rcp_reference_indices)])
             del rcp_latents
-        del source_latents
+        target_sources = torch.cat([source_latents, *references], dim=0) if references else source_latents
+        del source_latents, references
         # Parallel VAE replicas are stage-local. Retaining only the prototype
         # bounds parent host memory while distributed DiT workers load.
         vae.release_replicas()
